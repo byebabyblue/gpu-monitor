@@ -820,6 +820,8 @@ private fun V2NodePage(
                     }
                 }
 
+                V2GpuDeviceTable(backdrop, selected)
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("MOUNTED STORAGE", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
