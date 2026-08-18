@@ -187,6 +187,7 @@ internal fun V2GlassSurface(
         else -> Color.White
     }
     val explicitTint = tintColor != null
+    val pureGlass = tintMode == "clear" && !explicitTint
     val tintStrength = (tintAlpha / 0.20f).coerceIn(0.65f, 1.35f)
     val themedAlpha = when (tintMode) {
         "clear" -> if (darkText) 0.025f else 0.012f
@@ -205,31 +206,38 @@ internal fun V2GlassSurface(
                 effects = {
                     vibrancy()
                     if (surfaceBlur) blur(blurRadius.toPx())
-                    lens(lensRadius.toPx(), (lensRadius.value * 0.72f).dp.toPx())
+                    lens(
+                        if (pureGlass) 36.dp.toPx() else lensRadius.toPx(),
+                        if (pureGlass) 25.dp.toPx() else (lensRadius.value * 0.72f).dp.toPx(),
+                    )
                 },
                 highlight = { Highlight.Ambient },
                 onDrawSurface = {
-                    drawRect(surfaceTint.copy(alpha = surfaceAlpha))
-                    drawRect(
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = if (explicitTint) 0.105f else 0.050f),
-                                gradientTint.copy(alpha = gradientTintAlpha),
-                                Color.Transparent,
-                            ),
-                            start = Offset.Zero,
-                            end = Offset(size.width, size.height),
-                        )
-                    )
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = if (explicitTint) 0.045f else 0.025f),
-                                Color.Transparent,
-                                Color.Black.copy(alpha = if (explicitTint) 0.075f else 0.035f),
+                    if (pureGlass) {
+                        drawRect(Color.White.copy(alpha = 0.012f))
+                    } else {
+                        drawRect(surfaceTint.copy(alpha = surfaceAlpha))
+                        drawRect(
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = if (explicitTint) 0.105f else 0.050f),
+                                    gradientTint.copy(alpha = gradientTintAlpha),
+                                    Color.Transparent,
+                                ),
+                                start = Offset.Zero,
+                                end = Offset(size.width, size.height),
                             )
                         )
-                    )
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = if (explicitTint) 0.045f else 0.025f),
+                                    Color.Transparent,
+                                    Color.Black.copy(alpha = if (explicitTint) 0.075f else 0.035f),
+                                )
+                            )
+                        )
+                    }
                     if (surfaceShade) {
                         drawRect(
                             (if (darkText) Color.White else Color.Black).copy(alpha = 0.15f)
@@ -249,6 +257,18 @@ internal fun V2PureGlassSurface(
     readabilityAware: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    val tintMode = LocalV2GlassTint.current
+    if (tintMode != "clear") {
+        V2GlassSurface(
+            backdrop = backdrop,
+            modifier = modifier,
+            shape = shape,
+            tintAlpha = 0.20f,
+            enableBlur = if (readabilityAware) null else false,
+            content = content,
+        )
+        return
+    }
     val useReadabilityBlur = readabilityAware && LocalV2ReadabilityBlur.current
     val useReadabilityShade = readabilityAware && LocalV2ReadabilityShade.current
     val darkText = LocalV2DarkText.current
