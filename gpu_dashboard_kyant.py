@@ -3244,6 +3244,7 @@ class Dashboard(QMainWindow):
                 "default_page": str(ui.get("default_page", "home") or "home"),
                 "autostart": bool(ui.get("autostart", False)),
                 "readability_blur": bool(ui.get("readability_blur", False)),
+                "readability_shade": bool(ui.get("readability_shade", ui.get("readability_blur", False))),
                 "text_mode": str(ui.get("text_mode", "light") or "light"),
                 "top_bar_blur": bool(ui.get("top_bar_blur", True)),
                 "bottom_bar_blur": bool(ui.get("bottom_bar_blur", True)),
@@ -3356,6 +3357,8 @@ class Dashboard(QMainWindow):
             ui["autostart"] = enabled
         if "readability_blur" in ui_payload:
             ui["readability_blur"] = bool(ui_payload["readability_blur"])
+        if "readability_shade" in ui_payload:
+            ui["readability_shade"] = bool(ui_payload["readability_shade"])
         if "text_mode" in ui_payload:
             text_mode = str(ui_payload.get("text_mode", "light")).lower()
             if text_mode not in {"light", "dark"}:

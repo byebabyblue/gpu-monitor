@@ -222,6 +222,7 @@ internal fun GpuMonitorDashboardV2(
     CompositionLocalProvider(
         LocalDensity provides scaledDensity,
         LocalV2ReadabilityBlur provides config.ui.readabilityBlur,
+        LocalV2ReadabilityShade provides config.ui.readabilityShade,
         LocalV2DarkText provides (config.ui.textMode == "dark"),
         LocalV2TopBarBlur provides config.ui.topBarBlur,
         LocalV2BottomBarBlur provides config.ui.bottomBarBlur,
@@ -306,8 +307,13 @@ internal fun GpuMonitorDashboardV2(
                         onWallpaperPreview = { path ->
                             config = config.copy(ui = config.ui.copy(wallpaperPath = path))
                         },
-                        onReadabilityPreview = { enabled ->
-                            config = config.copy(ui = config.ui.copy(readabilityBlur = enabled))
+                        onReadabilityPreview = { blur, shade ->
+                            config = config.copy(
+                                ui = config.ui.copy(
+                                    readabilityBlur = blur,
+                                    readabilityShade = shade,
+                                )
+                            )
                         },
                         onTextModePreview = { mode ->
                             config = config.copy(ui = config.ui.copy(textMode = mode))
@@ -1231,7 +1237,7 @@ private fun V2SettingsPage(
     updateMessage: String,
     onCheckUpdate: () -> Unit,
     onWallpaperPreview: (String) -> Unit,
-    onReadabilityPreview: (Boolean) -> Unit,
+    onReadabilityPreview: (Boolean, Boolean) -> Unit,
     onTextModePreview: (String) -> Unit,
     onTopBarBlurPreview: (Boolean) -> Unit,
     onBottomBarBlurPreview: (Boolean) -> Unit,
@@ -1256,6 +1262,7 @@ private fun V2SettingsPage(
     var defaultPage by remember { mutableStateOf(config.ui.defaultPage) }
     var autostart by remember { mutableStateOf(config.ui.autostart) }
     var readabilityBlur by remember { mutableStateOf(config.ui.readabilityBlur) }
+    var readabilityShade by remember { mutableStateOf(config.ui.readabilityShade) }
     var textMode by remember { mutableStateOf(config.ui.textMode) }
     var topBarBlur by remember { mutableStateOf(config.ui.topBarBlur) }
     var bottomBarBlur by remember { mutableStateOf(config.ui.bottomBarBlur) }
@@ -1276,6 +1283,7 @@ private fun V2SettingsPage(
         defaultPage = config.ui.defaultPage
         autostart = config.ui.autostart
         readabilityBlur = config.ui.readabilityBlur
+        readabilityShade = config.ui.readabilityShade
         textMode = config.ui.textMode
         topBarBlur = config.ui.topBarBlur
         bottomBarBlur = config.ui.bottomBarBlur
@@ -1399,23 +1407,31 @@ private fun V2SettingsPage(
                 }
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.035f))
-                        .clickable {
-                            readabilityBlur = !readabilityBlur
-                            onReadabilityPreview(readabilityBlur)
-                        }.padding(horizontal = 14.dp, vertical = 9.dp),
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("增加可读性", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("打开后增加暗层与玻璃模糊；关闭时保留纯折射玻璃", color = V2Muted, fontSize = 9.sp)
+                    Column(Modifier.width(128.dp)) {
+                        Text("可读性", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("只作用于玻璃卡片", color = V2Muted, fontSize = 9.sp)
                     }
-                    Switch(
-                        checked = readabilityBlur,
-                        onCheckedChange = {
-                            readabilityBlur = it
-                            onReadabilityPreview(it)
+                    val readabilityModes = listOf(
+                        false to false,
+                        true to false,
+                        false to true,
+                        true to true,
+                    )
+                    V2SegmentedSlider(
+                        backdrop = backdrop,
+                        labels = listOf("关闭", "模糊", "暗层", "暗层 & 模糊"),
+                        selectedIndex = readabilityModes.indexOf(readabilityBlur to readabilityShade).coerceAtLeast(0),
+                        onSelected = { index ->
+                            val (blur, shade) = readabilityModes[index]
+                            readabilityBlur = blur
+                            readabilityShade = shade
+                            onReadabilityPreview(blur, shade)
                         },
-                        colors = SwitchDefaults.colors(checkedThumbColor = V2AccentStrong, checkedTrackColor = V2AccentStrong.copy(alpha = 0.45f)),
+                        modifier = Modifier.weight(1f),
+                        height = 34.dp,
                     )
                 }
                 Row(
@@ -1668,6 +1684,7 @@ private fun V2SettingsPage(
                             defaultPage = defaultPage,
                             autostart = autostart,
                             readabilityBlur = readabilityBlur,
+                            readabilityShade = readabilityShade,
                             textMode = textMode,
                             topBarBlur = topBarBlur,
                             bottomBarBlur = bottomBarBlur,

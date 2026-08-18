@@ -66,6 +66,7 @@ internal object MonitorInstallation {
                 addProperty("default_page", "home")
                 addProperty("autostart", false)
                 addProperty("readability_blur", false)
+                addProperty("readability_shade", false)
                 addProperty("text_mode", "light")
                 addProperty("top_bar_blur", true)
                 addProperty("bottom_bar_blur", true)
