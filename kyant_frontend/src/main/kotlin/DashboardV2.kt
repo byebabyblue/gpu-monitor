@@ -727,7 +727,12 @@ private fun V2GpuPage(
 
 @Composable
 private fun V2GpuDeviceTable(backdrop: Backdrop, server: MonitorServer) {
-    V2PureGlassSurface(backdrop, Modifier.fillMaxWidth(), RoundedCornerShape(24.dp)) {
+    V2PureGlassSurface(
+        backdrop,
+        Modifier.fillMaxWidth(),
+        RoundedCornerShape(24.dp),
+        readabilityAware = server.gpus.isEmpty(),
+    ) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("GPU DEVICES", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             if (server.gpus.isEmpty()) {
@@ -819,8 +824,6 @@ private fun V2NodePage(
                         V2SummaryChip("运行 / 排队", "${selected.runningTasks} / ${selected.queuedTasks}", V2Cyan)
                     }
                 }
-
-                V2GpuDeviceTable(backdrop, selected)
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("MOUNTED STORAGE", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
