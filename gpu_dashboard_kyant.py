@@ -44,6 +44,8 @@ import re
 import shlex
 import base64
 import hashlib
+import errno
+import socket
 from datetime import datetime
 from pathlib import Path
 from threading import Lock, RLock
@@ -218,6 +220,56 @@ class ServerInfo:
 _HOST_KEYS_LOCK = RLock()
 
 
+def _is_timeout_error(error):
+    """Return True for direct or wrapped socket/SSH timeout errors."""
+    pending = [error]
+    seen = set()
+    timeout_errnos = {errno.ETIMEDOUT, 10060}
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, (TimeoutError, socket.timeout)):
+            return True
+        if isinstance(current, OSError) and current.errno in timeout_errnos:
+            return True
+        message = str(current).lower()
+        if "timed out" in message or "timeout" in message or "超时" in message:
+            return True
+        nested_errors = getattr(current, "errors", None)
+        if isinstance(nested_errors, dict):
+            pending.extend(nested_errors.values())
+        pending.extend((current.__cause__, current.__context__))
+    return False
+
+
+def _friendly_ssh_error(error, phase="connect"):
+    """Translate common connection failures without hiding useful details."""
+    if _is_timeout_error(error):
+        if phase == "connect":
+            return "连接超时，无法获取服务器指纹"
+        return "连接超时，服务器未响应"
+
+    message = str(error).strip()
+    lowered = message.lower()
+    if "dll load failed" in lowered and "_ctypes" in lowered:
+        return "本机后端组件加载失败，请重新安装最新版本"
+
+    if HAS_PARAMIKO:
+        if isinstance(error, paramiko.BadHostKeyException):
+            return "服务器主机指纹已变化，已拒绝连接"
+        if isinstance(error, paramiko.AuthenticationException):
+            return "SSH 身份验证失败，请检查用户名、密码或私钥"
+        no_valid_connections = getattr(
+            paramiko.ssh_exception, "NoValidConnectionsError", ()
+        )
+        if no_valid_connections and isinstance(error, no_valid_connections):
+            return "无法连接服务器，请检查地址、端口、VPN 和服务器状态"
+
+    return message or "SSH 连接失败"
+
+
 def _host_key_fingerprint(key):
     digest = hashlib.sha256(key.asbytes()).digest()
     encoded = base64.b64encode(digest).decode("ascii").rstrip("=")
@@ -290,7 +342,9 @@ class SSHConnection:
 
         self.disconnect()
         client = paramiko.SSHClient()
-        client.load_system_host_keys()
+        # GPU Monitor owns its trust store.  Do not inherit host keys accepted
+        # by OpenSSH, Xshell, or other applications, otherwise this app's
+        # first-use fingerprint confirmation can be skipped unexpectedly.
         if self.known_hosts_path and self.known_hosts_path.is_file():
             client.load_host_keys(str(self.known_hosts_path))
         if self.accepted_host_key is None:
@@ -889,7 +943,7 @@ class MonitorThread(QThread):
                     self.info.name = self.cfg["name"]
                     self.info.status = "disconnected"
                     self.info.connected = False
-                    self.info.error  = str(e)
+                    self.info.error = _friendly_ssh_error(e, phase="connect")
                     self.conn_lost.emit(self.cfg["name"])
                     self._emit_snapshot()
                     self._sleep(wait)
@@ -941,7 +995,7 @@ class MonitorThread(QThread):
             except Exception as e:
                 self.info.status = "disconnected"
                 self.info.connected = False
-                self.info.error  = str(e)
+                self.info.error = _friendly_ssh_error(e, phase="poll")
                 self.conn_lost.emit(self.cfg["name"])
                 self._emit_snapshot()
                 if self.ssh:
