@@ -487,6 +487,7 @@ private fun V2HomePage(
     }
     val issues = servers.filterNot { it.connected }
     val scroll = rememberScrollState()
+    val loadLeadersScroll = rememberScrollState()
     val attentionScroll = rememberScrollState()
 
     Column(
@@ -525,12 +526,19 @@ private fun V2HomePage(
                     if (allGpus.isEmpty()) {
                         V2EmptyState("暂无实时 GPU 数据")
                     } else {
-                        allGpus.sortedByDescending { it.second.utilization }.take(6).forEach { (serverName, gpu) ->
-                            Column(
-                                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onOpenGpu(serverName) }
-                                    .padding(vertical = 2.dp),
-                            ) {
-                                V2UsageBar("$serverName · GPU ${gpu.index}", gpu.utilization)
+                        Column(
+                            Modifier.fillMaxWidth().weight(1f).verticalScroll(loadLeadersScroll),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            allGpus.sortedByDescending { it.second.utilization }.take(6).forEach { (serverName, gpu) ->
+                                Column(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp))
+                                        .background(Color.White.copy(alpha = 0.035f))
+                                        .clickable { onOpenGpu(serverName) }
+                                        .padding(horizontal = 13.dp, vertical = 10.dp),
+                                ) {
+                                    V2UsageBar("$serverName · GPU ${gpu.index}", gpu.utilization)
+                                }
                             }
                         }
                     }
@@ -1366,7 +1374,7 @@ private fun V2SettingsPage(
                 ) {
                     Column(Modifier.width(128.dp)) {
                         Text("玻璃色调", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("清透或轻微染色", color = V2Muted, fontSize = 9.sp)
+                        Text("纯玻璃或主题渐变", color = V2Muted, fontSize = 9.sp)
                     }
                     val tintValues = listOf("clear", "ice", "violet", "aqua", "warm")
                     V2SegmentedSlider(

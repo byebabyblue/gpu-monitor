@@ -3,7 +3,7 @@ import java.awt.Desktop
 import java.net.HttpURLConnection
 import java.net.URI
 
-internal const val GpuMonitorVersion = "0.2.4"
+internal const val GpuMonitorVersion = "0.2.5"
 internal const val GpuMonitorRepositoryUrl = "https://github.com/byebabyblue/gpu-monitor"
 internal const val GpuMonitorReleasesUrl = "$GpuMonitorRepositoryUrl/releases"
 
