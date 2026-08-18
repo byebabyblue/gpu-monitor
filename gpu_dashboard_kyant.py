@@ -34,6 +34,8 @@ Config (config.json):
 import sys
 import json
 import copy
+import os
+import shutil
 import time
 import math
 import random
@@ -1606,9 +1608,25 @@ class Dashboard(QMainWindow):
             except FileNotFoundError:
                 self._cfg = {"servers": [], "refresh_interval": 3}
             except (OSError, json.JSONDecodeError, ValueError) as exc:
-                self._cfg = {"servers": [], "refresh_interval": 3}
-                self._config_error = str(exc)
+                backup_path = cfg_path.parent / "config.backup.json"
+                try:
+                    with open(backup_path, encoding="utf-8") as f:
+                        restored_cfg = json.load(f)
+                    if not isinstance(restored_cfg, dict):
+                        raise ValueError("backup config root must be a JSON object")
+                    self._cfg = restored_cfg
+                    shutil.copy2(backup_path, cfg_path)
+                except (OSError, json.JSONDecodeError, ValueError):
+                    self._cfg = {"servers": [], "refresh_interval": 3}
+                    self._config_error = str(exc)
             self._cfg_path = str(cfg_path)
+
+            startup_ui = self._cfg.get("ui", {})
+            if isinstance(startup_ui, dict) and bool(startup_ui.get("autostart", False)):
+                try:
+                    self._set_autostart(True)
+                except (OSError, ValueError):
+                    pass
 
         self._interval = self._cfg.get("refresh_interval", 3)
         RefreshSettings._config_path = str(cfg_path) if not demo else None
@@ -2662,12 +2680,26 @@ class Dashboard(QMainWindow):
 
     def _save_config(self):
         if self._demo or not hasattr(self, "_cfg_path"):
-            return
+            return False
+        config_path = Path(self._cfg_path)
+        backup_path = config_path.with_name("config.backup.json")
+        temporary_path = config_path.with_name(f".{config_path.name}.tmp")
         try:
-            with open(self._cfg_path, "w", encoding="utf-8") as f:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            if config_path.is_file():
+                shutil.copy2(config_path, backup_path)
+            with open(temporary_path, "w", encoding="utf-8") as f:
                 json.dump(self._cfg, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary_path, config_path)
+            return True
         except OSError:
-            pass
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return False
 
     def _rename_overview_card(self, name, name_label):
         """Rename a server via dialog, update config and UI."""
@@ -3162,6 +3194,9 @@ class Dashboard(QMainWindow):
         except (TypeError, ValueError):
             font_scale = 1.08
         font_scale = max(0.90, min(1.35, font_scale))
+        glass_tint = str(ui.get("glass_tint", "clear") or "clear").lower()
+        if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:
+            glass_tint = "clear"
         hidden_servers_value = ui.get("hidden_servers", [])
         if not isinstance(hidden_servers_value, list):
             hidden_servers_value = []
@@ -3212,6 +3247,7 @@ class Dashboard(QMainWindow):
                 "text_mode": str(ui.get("text_mode", "light") or "light"),
                 "top_bar_blur": bool(ui.get("top_bar_blur", True)),
                 "bottom_bar_blur": bool(ui.get("bottom_bar_blur", True)),
+                "glass_tint": glass_tint,
                 "font_scale": font_scale,
                 "hidden_servers": hidden_servers,
                 "remember_window_bounds": bool(ui.get("remember_window_bounds", False)),
@@ -3329,6 +3365,11 @@ class Dashboard(QMainWindow):
             ui["top_bar_blur"] = bool(ui_payload["top_bar_blur"])
         if "bottom_bar_blur" in ui_payload:
             ui["bottom_bar_blur"] = bool(ui_payload["bottom_bar_blur"])
+        if "glass_tint" in ui_payload:
+            glass_tint = str(ui_payload.get("glass_tint", "clear")).lower()
+            if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:
+                raise ValueError("Unknown glass tint")
+            ui["glass_tint"] = glass_tint
         if "hidden_servers" in ui_payload:
             hidden_servers = ui_payload["hidden_servers"]
             if not isinstance(hidden_servers, list):
@@ -3370,7 +3411,8 @@ class Dashboard(QMainWindow):
                 raise ValueError("Font scale must be between 0.90 and 1.35")
             ui["font_scale"] = round(font_scale, 2)
         self._cfg["ui"] = ui
-        self._save_config()
+        if not self._save_config():
+            raise OSError("Unable to save configuration")
         return {
             "ok": True,
             "restart_required": restart_required,

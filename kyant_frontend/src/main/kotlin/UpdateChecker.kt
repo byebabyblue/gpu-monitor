@@ -3,7 +3,7 @@ import java.awt.Desktop
 import java.net.HttpURLConnection
 import java.net.URI
 
-internal const val GpuMonitorVersion = "0.2.1"
+internal const val GpuMonitorVersion = "0.2.2"
 internal const val GpuMonitorRepositoryUrl = "https://github.com/byebabyblue/gpu-monitor"
 internal const val GpuMonitorReleasesUrl = "$GpuMonitorRepositoryUrl/releases"
 
@@ -45,7 +45,9 @@ internal object UpdateChecker {
             val pageUrl = json.get("html_url")?.asString?.trim().orEmpty()
                 .ifBlank { "$GpuMonitorReleasesUrl/latest" }
             val displayName = json.get("name")?.asString?.trim().orEmpty().ifBlank { tagName }
-            val notes = json.get("body")?.takeUnless { it.isJsonNull }?.asString?.trim().orEmpty()
+            val notes = plainTextReleaseNotes(
+                json.get("body")?.takeUnless { it.isJsonNull }?.asString.orEmpty(),
+            )
             val installerUrl = json.getAsJsonArray("assets")
                 ?.asSequence()
                 ?.mapNotNull { element -> element.takeIf { it.isJsonObject }?.asJsonObject }
@@ -89,6 +91,37 @@ internal object UpdateChecker {
             if (comparison != 0) return comparison
         }
         return 0
+    }
+
+    internal fun plainTextReleaseNotes(markdown: String): String {
+        val image = Regex("!\\[([^]]*)]\\([^)]+\\)")
+        val link = Regex("\\[([^]]+)]\\([^)]+\\)")
+        val heading = Regex("^\\s{0,3}#{1,6}\\s*")
+        val quote = Regex("^\\s*>+\\s*")
+        val bullet = Regex("^\\s*[-+*]\\s+")
+        val numbered = Regex("^\\s*\\d+[.)]\\s+")
+        val html = Regex("<[^>]+>")
+        val horizontalRule = Regex("^\\s*([-*_])(?:\\s*\\1){2,}\\s*$")
+
+        return markdown.lineSequence()
+            .map { source ->
+                if (horizontalRule.matches(source)) return@map ""
+                source
+                    .replace(image) { match -> match.groupValues[1] }
+                    .replace(link) { match -> match.groupValues[1] }
+                    .replace(heading, "")
+                    .replace(quote, "")
+                    .replace(bullet, "• ")
+                    .replace(numbered, "• ")
+                    .replace(html, "")
+                    .replace("**", "")
+                    .replace("__", "")
+                    .replace("`", "")
+                    .trimEnd()
+            }
+            .joinToString("\n")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
     }
 
     private fun versionParts(value: String): List<Int> = value

@@ -96,6 +96,7 @@ internal data class UiSettings(
     val textMode: String = "light",
     val topBarBlur: Boolean = true,
     val bottomBarBlur: Boolean = true,
+    val glassTint: String = "clear",
     val fontScale: Double = 1.08,
     val hiddenServers: List<String> = emptyList(),
     val rememberWindowBounds: Boolean = false,
@@ -181,6 +182,7 @@ internal object MonitorClient {
             addProperty("text_mode", ui.textMode)
             addProperty("top_bar_blur", ui.topBarBlur)
             addProperty("bottom_bar_blur", ui.bottomBarBlur)
+            addProperty("glass_tint", ui.glassTint)
             addProperty("font_scale", ui.fontScale)
             add("hidden_servers", JsonArray().apply {
                 ui.hiddenServers.distinct().forEach { name -> add(name) }
@@ -345,6 +347,7 @@ internal object MonitorClient {
                 textMode = ui.stringValue("text_mode", "light"),
                 topBarBlur = ui.booleanValue("top_bar_blur", true),
                 bottomBarBlur = ui.booleanValue("bottom_bar_blur", true),
+                glassTint = ui.stringValue("glass_tint", "clear"),
                 fontScale = ui.doubleValue("font_scale", 1.08).coerceIn(0.90, 1.35),
                 hiddenServers = ui.arrayValue("hidden_servers").mapNotNull { element ->
                     runCatching { element.asString.trim() }.getOrNull()?.takeIf { it.isNotBlank() }
