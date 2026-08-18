@@ -377,7 +377,7 @@ internal fun GpuMonitorDashboardV2(
                                             } else {
                                                 "设置已保存并生效"
                                             }
-                                            saveToast = "已保存设置"
+                                            saveToast = "设置已保存"
                                         }
                                         .onFailure { settingsMessage = "保存失败：${it.message ?: "未知错误"}" }
                                     settingsBusy = false
@@ -425,7 +425,7 @@ internal fun GpuMonitorDashboardV2(
 
             if (saveToast.isNotBlank()) {
                 Box(
-                    Modifier.align(Alignment.TopEnd).padding(top = 92.dp, end = 30.dp),
+                    Modifier.align(Alignment.TopCenter).padding(top = 92.dp),
                 ) {
                     V2GlassToast(navigationBackdrop, saveToast)
                 }
@@ -1180,20 +1180,19 @@ private fun V2HostKeyDialog(
 private fun V2GlassToast(backdrop: Backdrop, message: String) {
     V2GlassSurface(
         backdrop = backdrop,
-        modifier = Modifier.height(48.dp).clip(RoundedCornerShape(20.dp)),
-        shape = RoundedCornerShape(20.dp),
-        tintColor = V2Green,
-        tintAlpha = 0.16f,
-        blurRadius = 16.dp,
-        lensRadius = 30.dp,
+        modifier = Modifier.width(144.dp).height(44.dp).clip(RoundedCornerShape(22.dp)),
+        shape = RoundedCornerShape(22.dp),
+        blurRadius = 14.dp,
+        lensRadius = 28.dp,
         enableBlur = true,
     ) {
         Row(
-            Modifier.padding(horizontal = 18.dp),
+            Modifier.fillMaxSize().padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.Center,
         ) {
-            Icon(Icons.Rounded.CheckCircle, null, tint = V2Green, modifier = Modifier.size(18.dp))
+            Icon(Icons.Rounded.CheckCircle, null, tint = V2Text, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(7.dp))
             Text(message, color = V2Text, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
     }
