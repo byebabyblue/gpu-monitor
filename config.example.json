@@ -1,0 +1,33 @@
+{
+  "settings": {
+    "gpu_active_interval": 3,
+    "gpu_idle_interval": 60,
+    "disk_interval": 30,
+    "process_interval": 6,
+    "idle_threshold": 600,
+    "api_port": 8766
+  },
+  "ui": {
+    "wallpaper_path": "",
+    "default_page": "home",
+    "autostart": false,
+    "readability_blur": false,
+    "font_scale": 1.08,
+    "top_bar_blur": true,
+    "text_mode": "light",
+    "bottom_bar_blur": true,
+    "hidden_servers": [],
+    "remember_window_bounds": false
+  },
+  "servers": [
+    {
+      "name": "example-server",
+      "host": "127.0.0.1",
+      "port": 22,
+      "user": "your-user",
+      "password": "",
+      "key": "",
+      "disk_path": "/data"
+    }
+  ]
+}

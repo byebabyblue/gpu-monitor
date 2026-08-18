@@ -1,0 +1,36 @@
+# Local credentials and machine-specific configuration
+config.json
+**/config.json
+!config.example.json
+*.env
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+ssh.config
+**/.ssh/
+
+# Local monitoring data and recovery copies
+backups/
+command_analysis_queue.jsonl
+task_notes.json
+task_note_patterns.json
+__pycache__/
+*.py[cod]
+
+# Build output and packaged binaries
+.gradle/
+**/build/
+GPU-Monitor-Kyant-Portable/backend/
+GPU-Monitor-Kyant-Portable/frontend/
+*.exe
+*.msi
+*.zip
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.iml
+*.lnk
+Thumbs.db
+Desktop.ini
