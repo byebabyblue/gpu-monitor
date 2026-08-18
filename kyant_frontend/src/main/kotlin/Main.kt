@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -303,6 +304,7 @@ fun main() {
     val bundledBackend = BundledBackendController()
     val launchBounds = MonitorInstallation.launchWindowBounds()
     application {
+        val appIcon = painterResource("app-icon.png")
         val windowState = rememberWindowState(
             position = WindowPosition.Absolute(launchBounds.x.dp, launchBounds.y.dp),
             width = launchBounds.width.dp,
@@ -316,6 +318,7 @@ fun main() {
             onCloseRequest = { showCloseDialog = true },
             title = "GPU Monitor · Kyant Glass",
             state = windowState,
+            icon = appIcon,
         ) {
             LaunchedEffect(window) {
                 window.minimumSize = Dimension(
