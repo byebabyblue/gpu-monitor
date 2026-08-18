@@ -733,7 +733,7 @@ private fun V2GpuPage(
     modifier: Modifier,
 ) {
     val selected = servers.getOrNull(selectedIndex)
-    var hours by remember { mutableIntStateOf(24) }
+    var rangeMinutes by remember { mutableIntStateOf(24 * 60) }
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         V2ServerSidebar(
             backdrop,
@@ -772,17 +772,22 @@ private fun V2GpuPage(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("HISTORY RANGE", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.width(12.dp))
-                    val hourOptions = listOf(1, 6, 24)
+                    val rangeOptions = listOf(
+                        15 to "15min",
+                        60 to "1h",
+                        6 * 60 to "6h",
+                        24 * 60 to "24h",
+                    )
                     V2SegmentedSlider(
                         backdrop = backdrop,
-                        labels = hourOptions.map { "${it}h" },
-                        selectedIndex = hourOptions.indexOf(hours).coerceAtLeast(0),
-                        onSelected = { index -> hours = hourOptions[index] },
+                        labels = rangeOptions.map { it.second },
+                        selectedIndex = rangeOptions.indexOfFirst { it.first == rangeMinutes }.coerceAtLeast(0),
+                        onSelected = { index -> rangeMinutes = rangeOptions[index].first },
                         modifier = Modifier.width(220.dp),
                         height = 36.dp,
                     )
                 }
-                V2GpuLineChart(backdrop, history, hours, Modifier.fillMaxWidth().height(286.dp))
+                V2GpuLineChart(backdrop, history, rangeMinutes, Modifier.fillMaxWidth().height(286.dp))
                 V2GpuHeatmap(backdrop, history, Modifier.fillMaxWidth().height(255.dp))
                 V2GpuDeviceTable(backdrop, selected)
             }
@@ -796,7 +801,7 @@ private fun V2GpuDeviceTable(backdrop: Backdrop, server: MonitorServer) {
         backdrop,
         Modifier.fillMaxWidth(),
         RoundedCornerShape(24.dp),
-        readabilityAware = server.gpus.isEmpty(),
+        readabilityAware = true,
     ) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("GPU DEVICES", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -959,7 +964,12 @@ private fun V2NodePage(
 @Composable
 private fun V2StorageCard(backdrop: Backdrop, disk: MonitorDisk, modifier: Modifier) {
     val usageColor = v2UsageColor(disk.percent)
-    V2PureGlassSurface(backdrop, modifier, RoundedCornerShape(22.dp)) {
+    V2PureGlassSurface(
+        backdrop = backdrop,
+        modifier = modifier,
+        shape = RoundedCornerShape(22.dp),
+        readabilityAware = true,
+    ) {
         Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Storage, null, tint = usageColor, modifier = Modifier.size(22.dp))

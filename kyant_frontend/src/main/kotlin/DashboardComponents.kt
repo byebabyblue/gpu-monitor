@@ -695,19 +695,25 @@ internal fun V2ServerSidebar(
 internal fun V2GpuLineChart(
     backdrop: Backdrop,
     history: List<GpuHistorySeries>,
-    hours: Int,
+    rangeMinutes: Int,
     modifier: Modifier = Modifier,
 ) {
-    val cutoff = System.currentTimeMillis() / 1000.0 - hours * 3600.0
-    val visible = remember(history, hours) {
-        history.map { series -> series.copy(points = series.points.filter { it.timestampSeconds >= cutoff }) }
+    val windowEndSeconds = System.currentTimeMillis() / 1000.0
+    val windowStartSeconds = windowEndSeconds - rangeMinutes.coerceAtLeast(1) * 60.0
+    val visible = history.map { series ->
+        series.copy(
+            points = series.points.filter { point ->
+                point.timestampSeconds in windowStartSeconds..windowEndSeconds
+            },
+        )
     }
+    val rangeLabel = gpuHistoryRangeLabel(rangeMinutes)
     V2GlassSurface(backdrop, modifier, RoundedCornerShape(22.dp), tintAlpha = 0.20f) {
         Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text("GPU USAGE HISTORY", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Text("Last $hours hours · utilization %", color = V2Dim, fontSize = 11.sp)
+                    Text("Last $rangeLabel · utilization %", color = V2Dim, fontSize = 11.sp)
                 }
                 Spacer(Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -733,15 +739,16 @@ internal fun V2GpuLineChart(
                             Offset(left, y), Offset(right, y), 1.dp.toPx(),
                         )
                     }
-                    val allPoints = visible.flatMap { it.points }
-                    if (allPoints.isNotEmpty()) {
-                        val minTime = allPoints.minOf { it.timestampSeconds }
-                        val maxTime = max(minTime + 1.0, allPoints.maxOf { it.timestampSeconds })
+                    if (visible.any { it.points.isNotEmpty() }) {
                         visible.take(8).forEachIndexed { index, series ->
                             if (series.points.size < 2) return@forEachIndexed
                             val path = Path()
                             series.points.forEachIndexed { pointIndex, point ->
-                                val x = left + ((point.timestampSeconds - minTime) / (maxTime - minTime)).toFloat() * (right - left)
+                                val x = left + gpuHistoryWindowFraction(
+                                    timestampSeconds = point.timestampSeconds,
+                                    windowEndSeconds = windowEndSeconds,
+                                    rangeMinutes = rangeMinutes,
+                                ) * (right - left)
                                 val y = bottom - (point.value.coerceIn(0.0, 100.0).toFloat() / 100f) * (bottom - top)
                                 if (pointIndex == 0) path.moveTo(x, y) else path.lineTo(x, y)
                             }
@@ -763,12 +770,30 @@ internal fun V2GpuLineChart(
                 }
             }
             Row(Modifier.fillMaxWidth()) {
-                Text("-${hours}h", color = V2Muted, fontSize = 9.sp)
+                Text("$rangeLabel ago", color = V2Muted, fontSize = 9.sp)
                 Spacer(Modifier.weight(1f))
                 Text("now", color = V2Muted, fontSize = 9.sp)
             }
         }
     }
+}
+
+internal fun gpuHistoryRangeLabel(rangeMinutes: Int): String = when (rangeMinutes) {
+    15 -> "15min"
+    60 -> "1h"
+    6 * 60 -> "6h"
+    24 * 60 -> "24h"
+    else -> if (rangeMinutes % 60 == 0) "${rangeMinutes / 60}h" else "${rangeMinutes}min"
+}
+
+internal fun gpuHistoryWindowFraction(
+    timestampSeconds: Double,
+    windowEndSeconds: Double,
+    rangeMinutes: Int,
+): Float {
+    val windowSeconds = rangeMinutes.coerceAtLeast(1) * 60.0
+    val windowStartSeconds = windowEndSeconds - windowSeconds
+    return ((timestampSeconds - windowStartSeconds) / windowSeconds).toFloat().coerceIn(0f, 1f)
 }
 
 @Composable
