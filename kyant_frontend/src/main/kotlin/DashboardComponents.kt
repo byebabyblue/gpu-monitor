@@ -250,6 +250,14 @@ internal fun V2PureGlassSurface(
     shape: RoundedCornerShape = RoundedCornerShape(22.dp),
     content: @Composable () -> Unit,
 ) {
+    val readabilityBlur = LocalV2ReadabilityBlur.current
+    val glassTint = when (LocalV2GlassTint.current) {
+        "ice" -> Color(0xFF8DB7FF)
+        "violet" -> Color(0xFFB595FF)
+        "aqua" -> Color(0xFF6EDCC8)
+        "warm" -> Color(0xFFFFC58F)
+        else -> Color.White
+    }
     Box(
         modifier = modifier
             .clip(shape)
@@ -258,10 +266,24 @@ internal fun V2PureGlassSurface(
                 shape = { shape },
                 effects = {
                     vibrancy()
+                    if (readabilityBlur) blur(14.dp.toPx())
                     lens(36.dp.toPx(), 25.dp.toPx())
                 },
                 highlight = { Highlight.Ambient },
-                onDrawSurface = { drawRect(Color.White.copy(alpha = 0.012f)) },
+                onDrawSurface = {
+                    drawRect(glassTint.copy(alpha = if (readabilityBlur) 0.035f else 0.012f))
+                    if (readabilityBlur) {
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.045f),
+                                    Color.Transparent,
+                                    Color.Black.copy(alpha = 0.025f),
+                                ),
+                            ),
+                        )
+                    }
+                },
             ),
         content = { content() },
     )
