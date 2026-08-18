@@ -47,6 +47,11 @@ internal object MonitorInstallation {
         val config = configFile()
         if (config.isFile) return config
         Files.createDirectories(config.parentFile.toPath())
+        val backup = File(config.parentFile, "config.backup.json")
+        if (backup.isFile) {
+            Files.copy(backup.toPath(), config.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            return config
+        }
         val root = JsonObject().apply {
             add("settings", JsonObject().apply {
                 addProperty("gpu_active_interval", 3)
@@ -64,6 +69,7 @@ internal object MonitorInstallation {
                 addProperty("text_mode", "light")
                 addProperty("top_bar_blur", true)
                 addProperty("bottom_bar_blur", true)
+                addProperty("glass_tint", "clear")
                 addProperty("font_scale", 1.08)
                 add("hidden_servers", com.google.gson.JsonArray())
                 addProperty("remember_window_bounds", false)

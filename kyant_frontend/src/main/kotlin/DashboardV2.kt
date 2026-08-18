@@ -112,6 +112,8 @@ internal fun GpuMonitorDashboardV2(
     var apiMessage by remember { mutableStateOf("正在连接后端…") }
     var refreshTick by remember { mutableIntStateOf(0) }
     var configTick by remember { mutableIntStateOf(0) }
+    var configLoaded by remember { mutableStateOf(false) }
+    var configGeneration by remember { mutableIntStateOf(0) }
     var defaultPageApplied by remember { mutableStateOf(false) }
     var settingsBusy by remember { mutableStateOf(false) }
     var settingsMessage by remember { mutableStateOf("") }
@@ -125,14 +127,43 @@ internal fun GpuMonitorDashboardV2(
     var updateRelease by remember { mutableStateOf<GpuMonitorRelease?>(null) }
 
     LaunchedEffect(apiPort, configTick) {
-        withContext(Dispatchers.IO) { MonitorClient.fetchConfig(apiPort) }
-            .onSuccess { fresh ->
-                config = fresh
-                if (!defaultPageApplied) {
-                    selectedTab = V2Tab.fromKey(fresh.ui.defaultPage)
-                    defaultPageApplied = true
-                }
+        configLoaded = false
+        while (true) {
+            val result = withContext(Dispatchers.IO) { MonitorClient.fetchConfig(apiPort) }
+            val fresh = result.getOrNull()
+            if (fresh == null) {
+                delay(650)
+                continue
             }
+
+            val wallpaperResult = withContext(Dispatchers.IO) {
+                WallpaperManager.normalizeConfiguredPath(fresh.ui.wallpaperPath)
+            }
+            val normalizedWallpaper = wallpaperResult.getOrNull()
+            val loaded = if (normalizedWallpaper != null && normalizedWallpaper != fresh.ui.wallpaperPath) {
+                val migratedUi = fresh.ui.copy(wallpaperPath = normalizedWallpaper)
+                val saved = withContext(Dispatchers.IO) {
+                    MonitorClient.saveSettings(apiPort, fresh.polling, migratedUi)
+                }
+                saved.getOrNull()?.config ?: fresh.copy(ui = migratedUi).also {
+                    settingsMessage = "壁纸已优化，但路径暂未写回配置"
+                }
+            } else {
+                if (wallpaperResult.isFailure && fresh.ui.wallpaperPath.isNotBlank()) {
+                    settingsMessage = "壁纸优化失败：${wallpaperResult.exceptionOrNull()?.message ?: "无法读取图片"}"
+                }
+                fresh
+            }
+
+            config = loaded
+            if (!defaultPageApplied) {
+                selectedTab = V2Tab.fromKey(loaded.ui.defaultPage)
+                defaultPageApplied = true
+            }
+            configLoaded = true
+            configGeneration++
+            break
+        }
     }
 
     LaunchedEffect(apiPort, refreshTick, config.polling.gpuActiveSeconds, config.ui.hiddenServers) {
@@ -194,6 +225,7 @@ internal fun GpuMonitorDashboardV2(
         LocalV2DarkText provides (config.ui.textMode == "dark"),
         LocalV2TopBarBlur provides config.ui.topBarBlur,
         LocalV2BottomBarBlur provides config.ui.bottomBarBlur,
+        LocalV2GlassTint provides config.ui.glassTint,
     ) {
         Box(Modifier.fillMaxSize().background(V2Background)) {
             Box(Modifier.fillMaxSize().layerBackdrop(navigationBackdrop)) {
@@ -239,10 +271,11 @@ internal fun GpuMonitorDashboardV2(
                     V2Tab.Settings -> V2SettingsPage(
                         backdrop = contentBackdrop,
                         config = config,
+                        configGeneration = configGeneration,
                         serverCount = visibleServers.size,
                         serverNames = servers.map { it.name },
-                        saveBusy = settingsBusy,
-                        saveMessage = settingsMessage,
+                        saveBusy = settingsBusy || !configLoaded,
+                        saveMessage = if (configLoaded) settingsMessage else "正在载入已有设置，完成前不会覆盖配置",
                         addBusy = addServerBusy,
                         addMessage = addServerMessage,
                         serverActionMessage = removeServerMessage,
@@ -285,6 +318,9 @@ internal fun GpuMonitorDashboardV2(
                         onBottomBarBlurPreview = { enabled ->
                             config = config.copy(ui = config.ui.copy(bottomBarBlur = enabled))
                         },
+                        onGlassTintPreview = { tint ->
+                            config = config.copy(ui = config.ui.copy(glassTint = tint))
+                        },
                         onFontScalePreview = { scale ->
                             config = config.copy(ui = config.ui.copy(fontScale = scale))
                         },
@@ -296,20 +332,35 @@ internal fun GpuMonitorDashboardV2(
                             pendingDeleteServer = name
                         },
                         onSave = { polling, ui ->
-                            settingsBusy = true
-                            settingsMessage = "正在保存…"
-                            scope.launch {
-                                withContext(Dispatchers.IO) { MonitorClient.saveSettings(apiPort, polling, ui) }
-                                    .onSuccess { result ->
-                                        config = result.config
-                                        settingsMessage = if (result.restartRequired) {
-                                            "已保存。通信端口将在重启 GPU Monitor 后生效"
-                                        } else {
-                                            "设置已保存并生效"
-                                        }
+                            if (!configLoaded) {
+                                settingsMessage = "已有设置仍在载入，请稍候"
+                            } else {
+                                settingsBusy = true
+                                settingsMessage = "正在保存…"
+                                scope.launch {
+                                    val wallpaperResult = withContext(Dispatchers.IO) {
+                                        WallpaperManager.normalizeConfiguredPath(ui.wallpaperPath)
                                     }
-                                    .onFailure { settingsMessage = "保存失败：${it.message ?: "未知错误"}" }
-                                settingsBusy = false
+                                    val managedPath = wallpaperResult.getOrNull()
+                                    if (managedPath == null) {
+                                        settingsMessage = "壁纸处理失败：${wallpaperResult.exceptionOrNull()?.message ?: "无法读取图片"}"
+                                        settingsBusy = false
+                                        return@launch
+                                    }
+                                    val managedUi = ui.copy(wallpaperPath = managedPath)
+                                    withContext(Dispatchers.IO) { MonitorClient.saveSettings(apiPort, polling, managedUi) }
+                                        .onSuccess { result ->
+                                            config = result.config
+                                            configGeneration++
+                                            settingsMessage = if (result.restartRequired) {
+                                                "已保存。通信端口将在重启 GPU Monitor 后生效"
+                                            } else {
+                                                "设置已保存并生效"
+                                            }
+                                        }
+                                        .onFailure { settingsMessage = "保存失败：${it.message ?: "未知错误"}" }
+                                    settingsBusy = false
+                                }
                             }
                         },
                         onAddServer = { draft ->
@@ -1017,7 +1068,8 @@ private fun V2UpdateDialog(
                 release.notes,
                 color = V2Muted,
                 fontSize = 10.sp,
-                maxLines = 6,
+                lineHeight = 15.sp,
+                maxLines = 8,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
                     .background(Color.White.copy(alpha = 0.035f)).padding(13.dp),
@@ -1162,6 +1214,7 @@ private fun V2GlassDialogButton(
 private fun V2SettingsPage(
     backdrop: Backdrop,
     config: DashboardConfig,
+    configGeneration: Int,
     serverCount: Int,
     serverNames: List<String>,
     saveBusy: Boolean,
@@ -1177,6 +1230,7 @@ private fun V2SettingsPage(
     onTextModePreview: (String) -> Unit,
     onTopBarBlurPreview: (Boolean) -> Unit,
     onBottomBarBlurPreview: (Boolean) -> Unit,
+    onGlassTintPreview: (String) -> Unit,
     onFontScalePreview: (Double) -> Unit,
     onHiddenServersPreview: (List<String>) -> Unit,
     onRequestRemoveServer: (String) -> Unit,
@@ -1184,7 +1238,10 @@ private fun V2SettingsPage(
     onAddServer: (ServerDraft) -> Unit,
     modifier: Modifier,
 ) {
+    val wallpaperScope = rememberCoroutineScope()
     var wallpaper by remember { mutableStateOf(config.ui.wallpaperPath) }
+    var wallpaperBusy by remember { mutableStateOf(false) }
+    var wallpaperMessage by remember { mutableStateOf("") }
     var apiPortText by remember { mutableStateOf(config.polling.apiPort.toString()) }
     var activeSeconds by remember { mutableIntStateOf(config.polling.gpuActiveSeconds) }
     var idleSeconds by remember { mutableIntStateOf(config.polling.gpuIdleSeconds) }
@@ -1197,12 +1254,13 @@ private fun V2SettingsPage(
     var textMode by remember { mutableStateOf(config.ui.textMode) }
     var topBarBlur by remember { mutableStateOf(config.ui.topBarBlur) }
     var bottomBarBlur by remember { mutableStateOf(config.ui.bottomBarBlur) }
+    var glassTint by remember { mutableStateOf(config.ui.glassTint) }
     var fontScale by remember { mutableStateOf(config.ui.fontScale) }
     var hiddenServers by remember { mutableStateOf(config.ui.hiddenServers.toSet()) }
     var rememberWindowBounds by remember { mutableStateOf(config.ui.rememberWindowBounds) }
     var draft by remember { mutableStateOf(ServerDraft()) }
 
-    LaunchedEffect(config) {
+    LaunchedEffect(configGeneration) {
         wallpaper = config.ui.wallpaperPath
         apiPortText = config.polling.apiPort.toString()
         activeSeconds = config.polling.gpuActiveSeconds
@@ -1216,6 +1274,7 @@ private fun V2SettingsPage(
         textMode = config.ui.textMode
         topBarBlur = config.ui.topBarBlur
         bottomBarBlur = config.ui.bottomBarBlur
+        glassTint = config.ui.glassTint
         fontScale = config.ui.fontScale
         hiddenServers = config.ui.hiddenServers.toSet()
         rememberWindowBounds = config.ui.rememberWindowBounds
@@ -1236,18 +1295,35 @@ private fun V2SettingsPage(
                 Text("壁纸", color = V2Dim, fontSize = 11.sp)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     V2Field(wallpaper, { wallpaper = it }, "图片路径", Modifier.weight(1f))
-                    V2ActionButton("选择", Icons.Rounded.Image, false) {
-                        chooseWallpaper()?.let {
-                            wallpaper = it
-                            onWallpaperPreview(it)
+                    V2ActionButton("选择", Icons.Rounded.Image, wallpaperBusy) {
+                        chooseWallpaper()?.let { selectedPath ->
+                            wallpaperBusy = true
+                            wallpaperMessage = "正在保留原图并生成 ${WallpaperManager.displayResolutionLabel()} 显示副本…"
+                            wallpaperScope.launch {
+                                withContext(Dispatchers.IO) { WallpaperManager.importWallpaper(selectedPath) }
+                                    .onSuccess { asset ->
+                                        wallpaper = asset.displayPath
+                                        onWallpaperPreview(asset.displayPath)
+                                        wallpaperMessage = "已保留原图，界面使用 ${asset.renderedWidth} × ${asset.renderedHeight} 优化图"
+                                    }
+                                    .onFailure { error ->
+                                        wallpaperMessage = "壁纸处理失败：${error.message ?: "无法读取图片"}"
+                                    }
+                                wallpaperBusy = false
+                            }
                         }
                     }
-                    V2ActionButton("清除", Icons.Rounded.Refresh, false) {
+                    V2ActionButton("清除", Icons.Rounded.Refresh, wallpaperBusy) {
                         wallpaper = ""
+                        wallpaperMessage = "已清除预览，保存后生效"
                         onWallpaperPreview("")
                     }
                 }
-                Text("选择后立即预览，点击保存后永久生效。", color = V2Muted, fontSize = 9.sp)
+                Text(
+                    wallpaperMessage.ifBlank { "原图保存在本机 original 文件夹，界面只读取 display 优化图；点击保存后永久生效。" },
+                    color = if (wallpaperMessage.startsWith("壁纸处理失败")) V2Red else V2Muted,
+                    fontSize = 9.sp,
+                )
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.035f))
                         .padding(horizontal = 14.dp, vertical = 9.dp),
@@ -1267,6 +1343,28 @@ private fun V2SettingsPage(
                             onTextModePreview(textMode)
                         },
                         modifier = Modifier.width(220.dp),
+                        height = 34.dp,
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.035f))
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.width(128.dp)) {
+                        Text("玻璃色调", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("清透或轻微染色", color = V2Muted, fontSize = 9.sp)
+                    }
+                    val tintValues = listOf("clear", "ice", "violet", "aqua", "warm")
+                    V2SegmentedSlider(
+                        backdrop = backdrop,
+                        labels = listOf("清透", "冰蓝", "紫晶", "青绿", "暖金"),
+                        selectedIndex = tintValues.indexOf(glassTint).coerceAtLeast(0),
+                        onSelected = { index ->
+                            glassTint = tintValues[index]
+                            onGlassTintPreview(glassTint)
+                        },
+                        modifier = Modifier.weight(1f),
                         height = 34.dp,
                     )
                 }
@@ -1554,7 +1652,7 @@ private fun V2SettingsPage(
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("保存设置", color = V2Text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Text(saveMessage.ifBlank { "设置保存在软件目录的 config.json 中" }, color = V2Dim, fontSize = 10.sp)
+                    Text(saveMessage.ifBlank { "设置保存在 %APPDATA%\\GPU Monitor\\config.json" }, color = V2Dim, fontSize = 10.sp)
                 }
                 V2ActionButton("保存并应用", Icons.Rounded.Save, saveBusy) {
                     val port = apiPortText.toIntOrNull()?.coerceIn(1024, 65535) ?: DefaultApiPort
@@ -1568,6 +1666,7 @@ private fun V2SettingsPage(
                             textMode = textMode,
                             topBarBlur = topBarBlur,
                             bottomBarBlur = bottomBarBlur,
+                            glassTint = glassTint,
                             fontScale = fontScale,
                             hiddenServers = hiddenServers.sorted(),
                             rememberWindowBounds = rememberWindowBounds,

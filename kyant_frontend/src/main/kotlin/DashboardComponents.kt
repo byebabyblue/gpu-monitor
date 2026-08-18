@@ -28,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -37,6 +38,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -57,6 +59,8 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.floor
 import kotlin.math.max
@@ -73,6 +77,7 @@ internal val LocalV2ReadabilityBlur = staticCompositionLocalOf { false }
 internal val LocalV2DarkText = staticCompositionLocalOf { false }
 internal val LocalV2TopBarBlur = staticCompositionLocalOf { true }
 internal val LocalV2BottomBarBlur = staticCompositionLocalOf { true }
+internal val LocalV2GlassTint = staticCompositionLocalOf { "clear" }
 
 internal val V2Text: Color
     @Composable
@@ -104,23 +109,29 @@ private val chartColors = listOf(
 internal fun V2Backdrop(backdrop: LayerBackdrop, wallpaperPath: String) {
     val readabilityBlur = LocalV2ReadabilityBlur.current
     val darkText = LocalV2DarkText.current
-    val wallpaper = remember(wallpaperPath) {
-        if (wallpaperPath.isBlank()) null
-        else runCatching {
-            org.jetbrains.skia.Image.makeFromEncoded(File(wallpaperPath).readBytes()).toComposeImageBitmap()
-        }.getOrNull()
+    val wallpaper by produceState<ImageBitmap?>(initialValue = null, wallpaperPath) {
+        value = if (wallpaperPath.isBlank()) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    org.jetbrains.skia.Image.makeFromEncoded(File(wallpaperPath).readBytes()).toComposeImageBitmap()
+                }.getOrNull()
+            }
+        }
     }
+    val loadedWallpaper = wallpaper
     Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-        if (wallpaper != null) {
+        if (loadedWallpaper != null) {
             Image(
-                bitmap = wallpaper,
+                bitmap = loadedWallpaper,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
         }
         Canvas(Modifier.fillMaxSize()) {
-            if (wallpaper == null) {
+            if (loadedWallpaper == null) {
                 drawRect(
                     brush = Brush.linearGradient(
                         colors = if (darkText) {
@@ -174,7 +185,24 @@ internal fun V2GlassSurface(
 ) {
     val darkText = LocalV2DarkText.current
     val surfaceBlur = enableBlur ?: LocalV2ReadabilityBlur.current
-    val surfaceTint = tintColor ?: if (darkText) Color.White else Color(0xFF0C162C)
+    val tintMode = LocalV2GlassTint.current
+    val themedTint = when (tintMode) {
+        "ice" -> Color(0xFF8DB7FF)
+        "violet" -> Color(0xFFB595FF)
+        "aqua" -> Color(0xFF6EDCC8)
+        "warm" -> Color(0xFFFFC58F)
+        else -> Color.White
+    }
+    val explicitTint = tintColor != null
+    val tintStrength = (tintAlpha / 0.20f).coerceIn(0.65f, 1.35f)
+    val themedAlpha = when (tintMode) {
+        "clear" -> if (darkText) 0.025f else 0.012f
+        else -> if (darkText) 0.045f else 0.032f
+    } * tintStrength
+    val surfaceTint = tintColor ?: themedTint
+    val surfaceAlpha = if (explicitTint) tintAlpha else themedAlpha
+    val gradientTint = if (explicitTint) Color(0xFF8DB7FF) else themedTint
+    val gradientTintAlpha = if (explicitTint) 0.055f else if (tintMode == "clear") 0.006f else 0.026f
     Box(
         modifier = modifier
             .clip(shape)
@@ -188,12 +216,12 @@ internal fun V2GlassSurface(
                 },
                 highlight = { Highlight.Ambient },
                 onDrawSurface = {
-                    drawRect(surfaceTint.copy(alpha = tintAlpha))
+                    drawRect(surfaceTint.copy(alpha = surfaceAlpha))
                     drawRect(
                         brush = Brush.linearGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = 0.105f),
-                                Color(0xFF8DB7FF).copy(alpha = 0.055f),
+                                Color.White.copy(alpha = if (explicitTint) 0.105f else 0.050f),
+                                gradientTint.copy(alpha = gradientTintAlpha),
                                 Color.Transparent,
                             ),
                             start = Offset.Zero,
@@ -203,9 +231,9 @@ internal fun V2GlassSurface(
                     drawRect(
                         brush = Brush.verticalGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = 0.045f),
+                                Color.White.copy(alpha = if (explicitTint) 0.045f else 0.025f),
                                 Color.Transparent,
-                                Color.Black.copy(alpha = 0.075f),
+                                Color.Black.copy(alpha = if (explicitTint) 0.075f else 0.035f),
                             )
                         )
                     )

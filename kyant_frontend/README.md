@@ -17,9 +17,13 @@ backend. An installed copy stores its machine-specific configuration under
 `%APPDATA%\GPU Monitor\config.json`.
 
 The application and installer use `src/main/resources/app-icon.png` and
-`app-icon.ico`. Version `0.2.1` can check the latest published release from
+`app-icon.ico`. Version `0.2.2` can check the latest published release from
 `https://github.com/byebabyblue/gpu-monitor/releases` in Settings. The check
 only reads public GitHub release metadata; it does not upload local settings.
+
+Selected wallpapers are copied to `%LOCALAPPDATA%\GPU Monitor\wallpapers`.
+The untouched source is kept under `original`, while the UI loads a downscaled
+PNG from `display` sized for the largest connected monitor.
 
 ## Run from source
 
