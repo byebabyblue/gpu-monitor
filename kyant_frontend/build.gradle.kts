@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "local.gpu.monitor"
-version = "0.2.3"
+version = "0.2.4"
 
 kotlin {
     jvmToolchain(21)
@@ -38,7 +38,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "gpu-monitor-kyant"
-            packageVersion = "0.2.3"
+            packageVersion = "0.2.4"
             appResourcesRootDir.set(project.layout.projectDirectory.dir("appResources"))
             windows {
                 shortcut = true

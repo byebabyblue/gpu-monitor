@@ -74,6 +74,7 @@ internal val V2Yellow = Color(0xFFFFC76A)
 internal val V2Red = Color(0xFFFF778D)
 internal val V2Cyan = Color(0xFF66DFE8)
 internal val LocalV2ReadabilityBlur = staticCompositionLocalOf { false }
+internal val LocalV2ReadabilityShade = staticCompositionLocalOf { false }
 internal val LocalV2DarkText = staticCompositionLocalOf { false }
 internal val LocalV2TopBarBlur = staticCompositionLocalOf { true }
 internal val LocalV2BottomBarBlur = staticCompositionLocalOf { true }
@@ -107,7 +108,6 @@ private val chartColors = listOf(
 
 @Composable
 internal fun V2Backdrop(backdrop: LayerBackdrop, wallpaperPath: String) {
-    val readabilityBlur = LocalV2ReadabilityBlur.current
     val darkText = LocalV2DarkText.current
     val wallpaper by produceState<ImageBitmap?>(initialValue = null, wallpaperPath) {
         value = if (wallpaperPath.isBlank()) {
@@ -158,14 +158,6 @@ internal fun V2Backdrop(backdrop: LayerBackdrop, wallpaperPath: String) {
                     radius = size.minDimension * 0.21f,
                     center = Offset(size.width * 0.62f, size.height * 0.18f),
                 )
-            } else {
-                drawRect(
-                    if (darkText) {
-                        Color.White.copy(alpha = if (readabilityBlur) 0.30f else 0.08f)
-                    } else {
-                        Color.Black.copy(alpha = if (readabilityBlur) 0.30f else 0.08f)
-                    }
-                )
             }
         }
     }
@@ -185,6 +177,7 @@ internal fun V2GlassSurface(
 ) {
     val darkText = LocalV2DarkText.current
     val surfaceBlur = enableBlur ?: LocalV2ReadabilityBlur.current
+    val surfaceShade = enableBlur == null && LocalV2ReadabilityShade.current
     val tintMode = LocalV2GlassTint.current
     val themedTint = when (tintMode) {
         "ice" -> Color(0xFF8DB7FF)
@@ -237,6 +230,11 @@ internal fun V2GlassSurface(
                             )
                         )
                     )
+                    if (surfaceShade) {
+                        drawRect(
+                            (if (darkText) Color.White else Color.Black).copy(alpha = 0.15f)
+                        )
+                    }
                 },
             ),
         content = { content() },
@@ -252,6 +250,8 @@ internal fun V2PureGlassSurface(
     content: @Composable () -> Unit,
 ) {
     val useReadabilityBlur = readabilityAware && LocalV2ReadabilityBlur.current
+    val useReadabilityShade = readabilityAware && LocalV2ReadabilityShade.current
+    val darkText = LocalV2DarkText.current
     Box(
         modifier = modifier
             .clip(shape)
@@ -264,7 +264,14 @@ internal fun V2PureGlassSurface(
                     lens(36.dp.toPx(), 25.dp.toPx())
                 },
                 highlight = { Highlight.Ambient },
-                onDrawSurface = { drawRect(Color.White.copy(alpha = 0.012f)) },
+                onDrawSurface = {
+                    drawRect(Color.White.copy(alpha = 0.012f))
+                    if (useReadabilityShade) {
+                        drawRect(
+                            (if (darkText) Color.White else Color.Black).copy(alpha = 0.15f)
+                        )
+                    }
+                },
             ),
         content = { content() },
     )

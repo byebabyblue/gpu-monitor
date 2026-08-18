@@ -12,6 +12,7 @@
     "default_page": "home",
     "autostart": false,
     "readability_blur": false,
+    "readability_shade": false,
     "font_scale": 1.08,
     "top_bar_blur": true,
     "text_mode": "light",

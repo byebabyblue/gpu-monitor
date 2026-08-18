@@ -93,6 +93,7 @@ internal data class UiSettings(
     val defaultPage: String = "home",
     val autostart: Boolean = false,
     val readabilityBlur: Boolean = false,
+    val readabilityShade: Boolean = false,
     val textMode: String = "light",
     val topBarBlur: Boolean = true,
     val bottomBarBlur: Boolean = true,
@@ -179,6 +180,7 @@ internal object MonitorClient {
             addProperty("default_page", ui.defaultPage)
             addProperty("autostart", ui.autostart)
             addProperty("readability_blur", ui.readabilityBlur)
+            addProperty("readability_shade", ui.readabilityShade)
             addProperty("text_mode", ui.textMode)
             addProperty("top_bar_blur", ui.topBarBlur)
             addProperty("bottom_bar_blur", ui.bottomBarBlur)
@@ -344,6 +346,11 @@ internal object MonitorClient {
                 defaultPage = ui.stringValue("default_page", "home"),
                 autostart = ui.booleanValue("autostart"),
                 readabilityBlur = ui.booleanValue("readability_blur"),
+                readabilityShade = if (ui.value("readability_shade") != null) {
+                    ui.booleanValue("readability_shade")
+                } else {
+                    ui.booleanValue("readability_blur")
+                },
                 textMode = ui.stringValue("text_mode", "light"),
                 topBarBlur = ui.booleanValue("top_bar_blur", true),
                 bottomBarBlur = ui.booleanValue("bottom_bar_blur", true),
