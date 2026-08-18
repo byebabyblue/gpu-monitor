@@ -719,6 +719,7 @@ class MonitorThread(QThread):
                     wait = min(2 ** retries, 60)
                     self.info.name = self.cfg["name"]
                     self.info.status = "disconnected"
+                    self.info.connected = False
                     self.info.error  = str(e)
                     self.conn_lost.emit(self.cfg["name"])
                     self._emit_snapshot()
