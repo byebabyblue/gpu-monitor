@@ -42,6 +42,8 @@ import random
 import argparse
 import re
 import shlex
+import base64
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from threading import Lock, RLock
@@ -213,17 +215,70 @@ class ServerInfo:
 #  SSH helpers
 # ═══════════════════════════════════════════════════════════════════════
 
+_HOST_KEYS_LOCK = RLock()
+
+
+def _host_key_fingerprint(key):
+    digest = hashlib.sha256(key.asbytes()).digest()
+    encoded = base64.b64encode(digest).decode("ascii").rstrip("=")
+    return f"SHA256:{encoded}"
+
+
+class HostKeyPromptError(RuntimeError):
+    """Raised when a server host key is not trusted yet."""
+
+    def __init__(self, host_key_name, key):
+        self.host_key_name = str(host_key_name)
+        self.key = key
+        self.key_type = key.get_name()
+        self.fingerprint = _host_key_fingerprint(key)
+        super().__init__(
+            f"SSH host key confirmation required: {self.key_type} {self.fingerprint}"
+        )
+
+
+class _PromptForMissingHostKey:
+    def missing_host_key(self, client, hostname, key):
+        raise HostKeyPromptError(hostname, key)
+
+
+class _AcceptSpecificHostKey:
+    def __init__(self, expected_host_key_name, expected_key):
+        self.expected_host_key_name = expected_host_key_name
+        self.expected_key = expected_key
+
+    def missing_host_key(self, client, hostname, key):
+        same_name = hostname == self.expected_host_key_name
+        same_key = (
+            key.get_name() == self.expected_key.get_name()
+            and key.asbytes() == self.expected_key.asbytes()
+        )
+        if not same_name or not same_key:
+            raise RuntimeError(
+                "服务器主机指纹在确认后发生变化，已拒绝连接"
+            )
+        client._host_keys.add(hostname, key.get_name(), key)
+
+
 class SSHConnection:
     """Thin wrapper around paramiko.SSHClient with keep-alive & reconnect."""
 
     def __init__(self, host, port, user,
-                 key_file=None, password=None, passphrase=None):
+                 key_file=None, password=None, passphrase=None,
+                 known_hosts_path=None, accepted_host_key=None,
+                 accepted_host_key_name=None, remember_host_key=False):
         self.host       = host
         self.port       = port
         self.user       = user
         self.key_file   = key_file
         self.password   = password
         self.passphrase = passphrase
+        self.known_hosts_path = (
+            Path(known_hosts_path).expanduser() if known_hosts_path else None
+        )
+        self.accepted_host_key = accepted_host_key
+        self.accepted_host_key_name = accepted_host_key_name
+        self.remember_host_key = remember_host_key
         self._client = None
         self._lock = Lock()
 
@@ -236,7 +291,17 @@ class SSHConnection:
         self.disconnect()
         client = paramiko.SSHClient()
         client.load_system_host_keys()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        if self.known_hosts_path and self.known_hosts_path.is_file():
+            client.load_host_keys(str(self.known_hosts_path))
+        if self.accepted_host_key is None:
+            client.set_missing_host_key_policy(_PromptForMissingHostKey())
+        else:
+            client.set_missing_host_key_policy(
+                _AcceptSpecificHostKey(
+                    self.accepted_host_key_name,
+                    self.accepted_host_key,
+                )
+            )
 
         kwargs = dict(
             hostname=self.host,
@@ -264,10 +329,29 @@ class SSHConnection:
             kwargs["look_for_keys"] = False
 
         client.connect(**kwargs)
+        if self.accepted_host_key is not None and self.remember_host_key:
+            self._remember_accepted_host_key()
         t = client.get_transport()
         if t:
             t.set_keepalive(30)
         self._client = client
+
+    def _remember_accepted_host_key(self):
+        if not self.known_hosts_path or self.accepted_host_key is None:
+            return
+        if not self.accepted_host_key_name:
+            raise RuntimeError("无法保存服务器主机指纹：主机标识为空")
+        with _HOST_KEYS_LOCK:
+            host_keys = paramiko.HostKeys()
+            if self.known_hosts_path.is_file():
+                host_keys.load(str(self.known_hosts_path))
+            host_keys.add(
+                self.accepted_host_key_name,
+                self.accepted_host_key.get_name(),
+                self.accepted_host_key,
+            )
+            self.known_hosts_path.parent.mkdir(parents=True, exist_ok=True)
+            host_keys.save(str(self.known_hosts_path))
 
     def disconnect(self):
         with self._lock:
@@ -659,20 +743,32 @@ class MonitorThread(QThread):
     status_changed  = pyqtSignal(str, str)       # (server_name, status_str)
     conn_lost       = pyqtSignal(str)
     conn_restored   = pyqtSignal(str)
+    host_key_required = pyqtSignal(str, object)  # (server_name, prompt)
 
-    def __init__(self, cfg: dict, interval: float = 3.0, parent=None):
+    def __init__(self, cfg: dict, interval: float = 3.0,
+                 known_hosts_path=None, parent=None):
         super().__init__(parent)
         self.cfg      = cfg
         self.interval = interval
+        self.known_hosts_path = known_hosts_path
         self._stop    = False
         self.ssh: SSHConnection | None = None
         self.collector: DataCollector | None = None
         self.info     = ServerInfo(cfg["name"])
         self._last_gpu_activity = time.time()
+        self._host_key_lock = Lock()
+        self._host_key_event = threading.Event()
+        self._host_key_prompt = None
+        self._host_key_decision = None
+        self._host_key_blocked = False
+        self._accepted_host_key = None
+        self._accepted_host_key_name = None
+        self._remember_host_key = False
 
     def stop(self):
         self._stop = True
         self.requestInterruption()
+        self._host_key_event.set()
         if self.ssh:
             self.ssh.disconnect()
 
@@ -681,12 +777,52 @@ class MonitorThread(QThread):
         ssh = self.ssh
         self.ssh = None
         self.collector = None
+        with self._host_key_lock:
+            self._host_key_blocked = False
+            self._host_key_decision = None
+            self._accepted_host_key = None
+            self._accepted_host_key_name = None
+            self._remember_host_key = False
+            self._host_key_event.set()
         if ssh:
             ssh.disconnect()
 
     def rename(self, new_name: str):
         self.cfg["name"] = new_name
         self.info.name = new_name
+
+    def resolve_host_key(self, decision: str) -> bool:
+        if decision not in {"once", "remember", "reject"}:
+            raise ValueError("Unknown host key decision")
+        with self._host_key_lock:
+            if self._host_key_prompt is None:
+                return False
+            self._host_key_decision = decision
+            self._host_key_event.set()
+            return True
+
+    def _wait_for_host_key_decision(self, error: HostKeyPromptError):
+        prompt = {
+            "server_name": self.cfg["name"],
+            "host": self.cfg.get("host", ""),
+            "port": int(self.cfg.get("port", 22) or 22),
+            "user": self.cfg.get("user", ""),
+            "key_type": error.key_type,
+            "fingerprint": error.fingerprint,
+        }
+        with self._host_key_lock:
+            self._host_key_prompt = prompt
+            self._host_key_decision = None
+            self._host_key_event.clear()
+        self.host_key_required.emit(self.cfg["name"], prompt)
+        while not self._stop and not self.isInterruptionRequested():
+            if self._host_key_event.wait(0.25):
+                with self._host_key_lock:
+                    decision = self._host_key_decision
+                    self._host_key_prompt = None
+                    self._host_key_decision = None
+                return decision
+        return None
 
     def _emit_snapshot(self):
         """Emit an object the worker will no longer mutate."""
@@ -698,10 +834,16 @@ class MonitorThread(QThread):
     def run(self):
         retries = 0
         while not self._stop and not self.isInterruptionRequested():
+            if self._host_key_blocked:
+                self._sleep(0.5)
+                continue
             # ── (re)connect ───────────────────────────────────────────
             if self.ssh is None or not self.ssh.connected():
                 self.status_changed.emit(self.cfg["name"], "connecting")
                 try:
+                    accepted_host_key = self._accepted_host_key
+                    accepted_host_key_name = self._accepted_host_key_name
+                    remember_host_key = self._remember_host_key
                     self.ssh = SSHConnection(
                         self.cfg["host"],
                         self.cfg.get("port", 22),
@@ -709,13 +851,38 @@ class MonitorThread(QThread):
                         key_file=self.cfg.get("key"),
                         password=self.cfg.get("password"),
                         passphrase=self.cfg.get("passphrase"),
+                        known_hosts_path=self.known_hosts_path,
+                        accepted_host_key=accepted_host_key,
+                        accepted_host_key_name=accepted_host_key_name,
+                        remember_host_key=remember_host_key,
                     )
                     self.ssh.connect()
                     self.collector = DataCollector(self.ssh, self.cfg.get("disk_path", "."))
+                    self._accepted_host_key = None
+                    self._accepted_host_key_name = None
+                    self._remember_host_key = False
                     self.status_changed.emit(self.cfg["name"], "connected")
                     if retries > 0:
                         self.conn_restored.emit(self.cfg["name"])
                     retries = 0
+                except HostKeyPromptError as error:
+                    self.info.name = self.cfg["name"]
+                    self.info.status = "host_key_required"
+                    self.info.connected = False
+                    self.info.error = "等待确认服务器主机指纹"
+                    self._emit_snapshot()
+                    decision = self._wait_for_host_key_decision(error)
+                    if decision == "reject":
+                        self._host_key_blocked = True
+                        self.info.status = "disconnected"
+                        self.info.error = "已拒绝服务器主机指纹"
+                        self._emit_snapshot()
+                    elif decision in {"once", "remember"}:
+                        self._accepted_host_key = error.key
+                        self._accepted_host_key_name = error.host_key_name
+                        self._remember_host_key = decision == "remember"
+                        retries = 0
+                    continue
                 except Exception as e:
                     retries += 1
                     wait = min(2 ** retries, 60)
@@ -897,6 +1064,7 @@ class MockMonitorThread(QThread):
     status_changed = pyqtSignal(str, str)
     conn_lost      = pyqtSignal(str)
     conn_restored  = pyqtSignal(str)
+    host_key_required = pyqtSignal(str, object)
 
     def __init__(self, cfg: dict, profile_idx: int = 0,
                  interval: float = 2.0, parent=None):
@@ -1586,6 +1754,8 @@ class Dashboard(QMainWindow):
         self._servers: dict[str, ServerInfo]    = {}
         self._cards:   dict[str, ServerCard]    = {}
         self._threads: dict[str, QThread] = {}
+        self._host_key_prompts: dict[str, dict] = {}
+        self._known_hosts_path = None
         self._current: str | None = None
 
         if demo:
@@ -1620,6 +1790,7 @@ class Dashboard(QMainWindow):
                     self._cfg = {"servers": [], "refresh_interval": 3}
                     self._config_error = str(exc)
             self._cfg_path = str(cfg_path)
+            self._known_hosts_path = cfg_path.absolute().with_name("ssh_known_hosts")
 
             startup_ui = self._cfg.get("ui", {})
             if isinstance(startup_ui, dict) and bool(startup_ui.get("autostart", False)):
@@ -1948,10 +2119,16 @@ class Dashboard(QMainWindow):
                 t = MockMonitorThread(cfg, profile_idx=idx,
                                       interval=self._interval, parent=self)
             else:
-                t = MonitorThread(cfg, interval=self._interval, parent=self)
+                t = MonitorThread(
+                    cfg,
+                    interval=self._interval,
+                    known_hosts_path=self._known_hosts_path,
+                    parent=self,
+                )
             t.data_ready.connect(self._on_data)
             t.status_changed.connect(self._on_status)
             t.conn_lost.connect(self._on_connection_lost)
+            t.host_key_required.connect(self._on_host_key_required)
             self._threads[name] = t
 
         # auto-select first
@@ -2302,6 +2479,19 @@ class Dashboard(QMainWindow):
         with self._state_lock:
             if name in self._servers:
                 self._servers[name].status = status
+
+    def _on_host_key_required(self, name, prompt):
+        with self._state_lock:
+            self._host_key_prompts[name] = dict(prompt)
+            info = self._servers.get(name)
+            if info is not None:
+                info.status = "host_key_required"
+                info.connected = False
+                info.error = "等待确认服务器主机指纹"
+        card = self._cards.get(name)
+        info = self._servers.get(name)
+        if card is not None and info is not None:
+            card.update_info(info)
 
     def _copy_task_row(self, table: QTableWidget, row: int):
         """Copy all visible fields from one task row to the clipboard."""
@@ -2920,10 +3110,16 @@ class Dashboard(QMainWindow):
                     interval=self._interval, parent=self
                 )
             else:
-                t = MonitorThread(cfg, interval=self._interval, parent=self)
+                t = MonitorThread(
+                    cfg,
+                    interval=self._interval,
+                    known_hosts_path=self._known_hosts_path,
+                    parent=self,
+                )
             t.data_ready.connect(self._on_data)
             t.status_changed.connect(self._on_status)
             t.conn_lost.connect(self._on_connection_lost)
+            t.host_key_required.connect(self._on_host_key_required)
             self._threads[name] = t
             t.start()
 
@@ -3294,6 +3490,10 @@ class Dashboard(QMainWindow):
                 result.update(self._api_add_server(payload))
             elif action == "remove_server":
                 result.update(self._api_remove_server(str(payload.get("name", ""))))
+            elif action == "resolve_host_key":
+                result.update(self._api_resolve_host_key(
+                    str(payload.get("name", "")), payload
+                ))
             else:
                 raise ValueError("Unsupported API action")
         except Exception as exc:
@@ -3525,10 +3725,16 @@ class Dashboard(QMainWindow):
                 interval=self._interval, parent=self
             )
         else:
-            thread = MonitorThread(server_cfg, interval=self._interval, parent=self)
+            thread = MonitorThread(
+                server_cfg,
+                interval=self._interval,
+                known_hosts_path=self._known_hosts_path,
+                parent=self,
+            )
         thread.data_ready.connect(self._on_data)
         thread.status_changed.connect(self._on_status)
         thread.conn_lost.connect(self._on_connection_lost)
+        thread.host_key_required.connect(self._on_host_key_required)
         self._threads[name] = thread
         thread.start()
         self._overview_signature = None
@@ -3545,6 +3751,24 @@ class Dashboard(QMainWindow):
             raise ValueError("Server was not found")
         self._remove_server(name)
         return {"ok": True}
+
+    def _api_host_key_prompts(self):
+        with self._state_lock:
+            prompts = [dict(prompt) for prompt in self._host_key_prompts.values()]
+        return {"ok": True, "prompts": prompts}
+
+    def _api_resolve_host_key(self, name, payload):
+        if not name or name not in self._threads:
+            raise ValueError("Server was not found")
+        decision = str(payload.get("decision", "")).strip().lower()
+        if decision not in {"once", "remember", "reject"}:
+            raise ValueError("Unknown host key decision")
+        thread = self._threads[name]
+        if not isinstance(thread, MonitorThread) or not thread.resolve_host_key(decision):
+            raise ValueError("No pending host key confirmation for this server")
+        with self._state_lock:
+            self._host_key_prompts.pop(name, None)
+        return {"ok": True, "server_name": name, "decision": decision}
 
     def _run_api(self):
         sv = self
@@ -3564,6 +3788,8 @@ class Dashboard(QMainWindow):
                     self._send_json(data)
                 elif path == "/api/config":
                     self._send_json(sv._api_config_dict())
+                elif path == "/api/host-key-prompts":
+                    self._send_json(sv._api_host_key_prompts())
                 elif path.startswith("/api/servers/") and path.endswith("/history"):
                     encoded_name = path[len("/api/servers/"):-len("/history")]
                     name = unquote(encoded_name.rstrip("/"))
@@ -3605,6 +3831,11 @@ class Dashboard(QMainWindow):
                     self._dispatch_mutation("update_settings", payload)
                 elif path == "/api/servers":
                     self._dispatch_mutation("add_server", payload)
+                elif path.startswith("/api/host-key-prompts/"):
+                    name = unquote(path[len("/api/host-key-prompts/"):])
+                    mutation = dict(payload)
+                    mutation["name"] = name
+                    self._dispatch_mutation("resolve_host_key", mutation)
                 else:
                     self._send_error(404, "Not found")
 
