@@ -120,6 +120,9 @@ internal fun GpuMonitorDashboardV2(
     var pendingDeleteServer by remember { mutableStateOf<String?>(null) }
     var removeServerBusyName by remember { mutableStateOf<String?>(null) }
     var removeServerMessage by remember { mutableStateOf("") }
+    var updateBusy by remember { mutableStateOf(false) }
+    var updateMessage by remember { mutableStateOf("") }
+    var updateRelease by remember { mutableStateOf<GpuMonitorRelease?>(null) }
 
     LaunchedEffect(apiPort, configTick) {
         withContext(Dispatchers.IO) { MonitorClient.fetchConfig(apiPort) }
@@ -243,6 +246,30 @@ internal fun GpuMonitorDashboardV2(
                         addBusy = addServerBusy,
                         addMessage = addServerMessage,
                         serverActionMessage = removeServerMessage,
+                        updateBusy = updateBusy,
+                        updateMessage = updateMessage,
+                        onCheckUpdate = {
+                            if (!updateBusy) {
+                                updateBusy = true
+                                updateMessage = "正在从 GitHub 检查最新版本…"
+                                updateRelease = null
+                                scope.launch {
+                                    withContext(Dispatchers.IO) { UpdateChecker.fetchLatest() }
+                                        .onSuccess { release ->
+                                            updateRelease = release
+                                            updateMessage = if (release.updateAvailable) {
+                                                "发现新版 ${release.tagName}"
+                                            } else {
+                                                "当前已是最新版 · v$GpuMonitorVersion"
+                                            }
+                                        }
+                                        .onFailure { error ->
+                                            updateMessage = "检查失败：${error.message ?: "未知错误"}"
+                                        }
+                                    updateBusy = false
+                                }
+                            }
+                        },
                         onWallpaperPreview = { path ->
                             config = config.copy(ui = config.ui.copy(wallpaperPath = path))
                         },
@@ -353,6 +380,24 @@ internal fun GpuMonitorDashboardV2(
                                     }
                                 removeServerBusyName = null
                             }
+                        }
+                    },
+                )
+            }
+
+            updateRelease?.let { release ->
+                V2UpdateDialog(
+                    backdrop = navigationBackdrop,
+                    release = release,
+                    onDismiss = { updateRelease = null },
+                    onOpenRelease = {
+                        val url = if (release.updateAvailable) {
+                            release.installerUrl ?: release.pageUrl
+                        } else {
+                            release.pageUrl
+                        }
+                        UpdateChecker.openInBrowser(url).onFailure { error ->
+                            updateMessage = "无法打开浏览器：${error.message ?: "未知错误"}"
                         }
                     },
                 )
@@ -948,6 +993,56 @@ private fun V2DeleteServerDialog(
 }
 
 @Composable
+private fun V2UpdateDialog(
+    backdrop: Backdrop,
+    release: GpuMonitorRelease,
+    onDismiss: () -> Unit,
+    onOpenRelease: () -> Unit,
+) {
+    V2GlassDialogFrame(backdrop, onDismiss) {
+        Text("SOFTWARE UPDATE", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text(
+            if (release.updateAvailable) "发现新版 ${release.tagName}" else "已经是最新版",
+            color = V2Text,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            "当前 v$GpuMonitorVersion · GitHub 最新 ${release.tagName}",
+            color = V2Dim,
+            fontSize = 11.sp,
+        )
+        if (release.notes.isNotBlank()) {
+            Text(
+                release.notes,
+                color = V2Muted,
+                fontSize = 10.sp,
+                maxLines = 6,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                    .background(Color.White.copy(alpha = 0.035f)).padding(13.dp),
+            )
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            V2GlassDialogButton(
+                backdrop = backdrop,
+                label = if (release.updateAvailable && release.installerUrl != null) "下载新版" else "查看发布页",
+                color = V2Green,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenRelease,
+            )
+            V2GlassDialogButton(
+                backdrop = backdrop,
+                label = "返回",
+                color = V2Accent,
+                modifier = Modifier.weight(1f),
+                onClick = onDismiss,
+            )
+        }
+    }
+}
+
+@Composable
 private fun V2CloseApplicationDialog(
     backdrop: Backdrop,
     onMinimize: () -> Unit,
@@ -967,7 +1062,7 @@ private fun V2CloseApplicationDialog(
                 backdrop = backdrop,
                 label = "最小化到任务栏",
                 color = V2Accent,
-                modifier = Modifier.weight(1.25f),
+                modifier = Modifier.weight(1f),
                 onClick = {
                     onReturn()
                     onMinimize()
@@ -984,7 +1079,7 @@ private fun V2CloseApplicationDialog(
                 backdrop = backdrop,
                 label = "返回",
                 color = V2Green,
-                modifier = Modifier.weight(0.82f),
+                modifier = Modifier.weight(1f),
                 onClick = onReturn,
             )
         }
@@ -1074,6 +1169,9 @@ private fun V2SettingsPage(
     addBusy: Boolean,
     addMessage: String,
     serverActionMessage: String,
+    updateBusy: Boolean,
+    updateMessage: String,
+    onCheckUpdate: () -> Unit,
     onWallpaperPreview: (String) -> Unit,
     onReadabilityPreview: (Boolean) -> Unit,
     onTextModePreview: (String) -> Unit,
@@ -1385,6 +1483,38 @@ private fun V2SettingsPage(
                     fontSize = 11.sp,
                 )
             }
+        }
+
+        V2SettingsSection(
+            backdrop,
+            "SOFTWARE UPDATE",
+            "软件更新",
+            Icons.Rounded.CheckCircle,
+            Modifier.fillMaxWidth(),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("当前版本 · v$GpuMonitorVersion", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "从 github.com/byebabyblue/gpu-monitor 的 Releases 检查",
+                        color = V2Muted,
+                        fontSize = 9.sp,
+                    )
+                }
+                V2ActionButton("检查更新", Icons.Rounded.Refresh, updateBusy, onCheckUpdate)
+            }
+            if (updateMessage.isNotBlank()) {
+                Text(
+                    updateMessage,
+                    color = when {
+                        updateMessage.startsWith("检查失败") || updateMessage.startsWith("无法打开") -> V2Red
+                        updateMessage.startsWith("发现新版") -> V2Yellow
+                        else -> V2Green
+                    },
+                    fontSize = 10.sp,
+                )
+            }
+            Text("仅读取公开版本信息，不会上传服务器配置或其他本机数据。", color = V2Dim, fontSize = 9.sp)
         }
 
         V2GlassSurface(backdrop, Modifier.fillMaxWidth(), RoundedCornerShape(24.dp), tintAlpha = 0.20f) {

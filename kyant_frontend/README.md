@@ -16,6 +16,11 @@ The generated EXE installer includes the frontend runtime and the bundled
 backend. An installed copy stores its machine-specific configuration under
 `%APPDATA%\GPU Monitor\config.json`.
 
+The application and installer use `src/main/resources/app-icon.png` and
+`app-icon.ico`. Version `0.2.0` can check the latest published release from
+`https://github.com/byebabyblue/gpu-monitor/releases` in Settings. The check
+only reads public GitHub release metadata; it does not upload local settings.
+
 ## Run from source
 
 Start the backend first, then run the frontend with `gradlew.bat run`. For a
