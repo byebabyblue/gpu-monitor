@@ -68,6 +68,15 @@ internal data class MonitorServer(
         get() = if (gpus.isEmpty()) 0.0 else gpus.map { it.utilization }.average()
 }
 
+internal data class HostKeyPrompt(
+    val serverName: String,
+    val host: String,
+    val port: Int,
+    val user: String,
+    val keyType: String,
+    val fingerprint: String,
+)
+
 internal data class HistoryPoint(
     val timestampSeconds: Double,
     val value: Double,
@@ -160,6 +169,29 @@ internal object MonitorClient {
 
     fun fetchConfig(port: Int): Result<DashboardConfig> = runCatching {
         parseConfig(request(port, "GET", "/api/config").asJsonObject)
+    }
+
+    fun fetchHostKeyPrompts(port: Int): Result<List<HostKeyPrompt>> = runCatching {
+        request(port, "GET", "/api/host-key-prompts").asJsonObject
+            .arrayValue("prompts")
+            .map { element ->
+                val prompt = element.asJsonObject
+                HostKeyPrompt(
+                    serverName = prompt.stringValue("server_name"),
+                    host = prompt.stringValue("host"),
+                    port = prompt.intValue("port", 22),
+                    user = prompt.stringValue("user"),
+                    keyType = prompt.stringValue("key_type"),
+                    fingerprint = prompt.stringValue("fingerprint"),
+                )
+            }
+    }
+
+    fun resolveHostKey(port: Int, serverName: String, decision: String): Result<Unit> = runCatching {
+        val encoded = URLEncoder.encode(serverName, StandardCharsets.UTF_8)
+            .replace("+", "%20")
+        val body = JsonObject().apply { addProperty("decision", decision) }
+        request(port, "POST", "/api/host-key-prompts/$encoded", body)
     }
 
     fun saveSettings(

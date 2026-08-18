@@ -8,6 +8,8 @@ config.json
 id_rsa*
 id_ed25519*
 ssh.config
+ssh_known_hosts
+**/ssh_known_hosts
 **/.ssh/
 
 # Local monitoring data and recovery copies

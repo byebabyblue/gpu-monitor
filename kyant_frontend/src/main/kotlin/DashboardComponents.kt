@@ -88,12 +88,12 @@ internal val V2Text: Color
 internal val V2Dim: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalV2DarkText.current) Color(0xFF374151) else Color(0xFFDCE5F4)
+    get() = if (LocalV2DarkText.current) Color(0xFF1F2937) else Color(0xFFDCE5F4)
 
 internal val V2Muted: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalV2DarkText.current) Color(0xFF647083) else Color(0xFFC3D0E5)
+    get() = if (LocalV2DarkText.current) Color(0xFF374151) else Color(0xFFC3D0E5)
 
 private val chartColors = listOf(
     Color(0xFF72A8FF),

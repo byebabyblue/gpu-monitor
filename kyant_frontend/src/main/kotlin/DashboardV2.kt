@@ -125,6 +125,10 @@ internal fun GpuMonitorDashboardV2(
     var updateBusy by remember { mutableStateOf(false) }
     var updateMessage by remember { mutableStateOf("") }
     var updateRelease by remember { mutableStateOf<GpuMonitorRelease?>(null) }
+    var hostKeyPrompts by remember { mutableStateOf<List<HostKeyPrompt>>(emptyList()) }
+    var hostKeyBusy by remember { mutableStateOf(false) }
+    var hostKeyMessage by remember { mutableStateOf("") }
+    var saveToast by remember { mutableStateOf("") }
 
     LaunchedEffect(apiPort, configTick) {
         configLoaded = false
@@ -187,6 +191,8 @@ internal fun GpuMonitorDashboardV2(
                     if (servers.isEmpty()) selectedServerName = null
                     if (error.message?.isNotBlank() == true) settingsMessage = settingsMessage.ifBlank { "无法连接后端" }
                 }
+            withContext(Dispatchers.IO) { MonitorClient.fetchHostKeyPrompts(apiPort) }
+                .onSuccess { prompts -> hostKeyPrompts = prompts }
             delay(max(1, config.polling.gpuActiveSeconds) * 1000L)
         }
     }
@@ -205,6 +211,13 @@ internal fun GpuMonitorDashboardV2(
         }
     }
 
+    LaunchedEffect(saveToast) {
+        if (saveToast.isNotBlank()) {
+            delay(2000)
+            saveToast = ""
+        }
+    }
+
     val visibleServers = servers.filterNot { it.name in config.ui.hiddenServers }
     val selectedIndex = visibleServers.indexOfFirst { it.name == selectedServerName }.coerceAtLeast(0)
     val visibleApiMessage = if (apiOnline) {
@@ -213,6 +226,7 @@ internal fun GpuMonitorDashboardV2(
     } else {
         apiMessage
     }
+    val hostKeyPrompt = hostKeyPrompts.firstOrNull()
     val baseDensity = LocalDensity.current
     val scaledDensity = Density(
         density = baseDensity.density,
@@ -363,6 +377,7 @@ internal fun GpuMonitorDashboardV2(
                                             } else {
                                                 "设置已保存并生效"
                                             }
+                                            saveToast = "已保存设置"
                                         }
                                         .onFailure { settingsMessage = "保存失败：${it.message ?: "未知错误"}" }
                                     settingsBusy = false
@@ -406,6 +421,14 @@ internal fun GpuMonitorDashboardV2(
                     .padding(start = 22.dp, end = 22.dp, bottom = 20.dp),
             ) {
                 V2BottomBar(navigationBackdrop, selectedTab) { selectedTab = it }
+            }
+
+            if (saveToast.isNotBlank()) {
+                Box(
+                    Modifier.align(Alignment.TopEnd).padding(top = 92.dp, end = 30.dp),
+                ) {
+                    V2GlassToast(navigationBackdrop, saveToast)
+                }
             }
 
             pendingDeleteServer?.let { name ->
@@ -455,6 +478,34 @@ internal fun GpuMonitorDashboardV2(
                         }
                         UpdateChecker.openInBrowser(url).onFailure { error ->
                             updateMessage = "无法打开浏览器：${error.message ?: "未知错误"}"
+                        }
+                    },
+                )
+            }
+
+            hostKeyPrompt?.let { prompt ->
+                V2HostKeyDialog(
+                    backdrop = navigationBackdrop,
+                    prompt = prompt,
+                    busy = hostKeyBusy,
+                    message = hostKeyMessage,
+                    onDecision = { decision ->
+                        if (!hostKeyBusy) {
+                            hostKeyBusy = true
+                            hostKeyMessage = ""
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    MonitorClient.resolveHostKey(apiPort, prompt.serverName, decision)
+                                }
+                                    .onSuccess {
+                                        hostKeyPrompts = hostKeyPrompts.filterNot { it.serverName == prompt.serverName }
+                                        refreshTick++
+                                    }
+                                    .onFailure { error ->
+                                        hostKeyMessage = "处理失败：${error.message ?: "未知错误"}"
+                                    }
+                                hostKeyBusy = false
+                            }
                         }
                     },
                 )
@@ -1058,6 +1109,92 @@ private fun V2DeleteServerDialog(
                 enabled = !busy,
                 onClick = onConfirm,
             )
+        }
+    }
+}
+
+@Composable
+private fun V2HostKeyDialog(
+    backdrop: Backdrop,
+    prompt: HostKeyPrompt,
+    busy: Boolean,
+    message: String,
+    onDecision: (String) -> Unit,
+) {
+    V2GlassDialogFrame(backdrop, onDismiss = {}) {
+        Text("SSH HOST KEY", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("首次连接需要确认服务器指纹", color = V2Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "请确认下面的服务器主机指纹。未确认前不会继续读取服务器数据。",
+            color = V2Dim,
+            fontSize = 11.sp,
+        )
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp))
+                .background(Color.White.copy(alpha = 0.035f)).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Text("${prompt.serverName} · ${prompt.user}", color = V2Text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text("${prompt.host}:${prompt.port}", color = V2Dim, fontSize = 11.sp)
+            Text("密钥类型 · ${prompt.keyType}", color = V2Dim, fontSize = 10.sp)
+            Text(
+                prompt.fingerprint,
+                color = V2Text,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (message.isNotBlank()) Text(message, color = V2Red, fontSize = 10.sp)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            V2GlassDialogButton(
+                backdrop = backdrop,
+                label = "接受一次",
+                color = V2Accent,
+                modifier = Modifier.weight(1f),
+                enabled = !busy,
+                onClick = { onDecision("once") },
+            )
+            V2GlassDialogButton(
+                backdrop = backdrop,
+                label = "接受并记住",
+                color = V2Green,
+                modifier = Modifier.weight(1f),
+                enabled = !busy,
+                onClick = { onDecision("remember") },
+            )
+            V2GlassDialogButton(
+                backdrop = backdrop,
+                label = "不接受",
+                color = V2Red,
+                modifier = Modifier.weight(1f),
+                enabled = !busy,
+                onClick = { onDecision("reject") },
+            )
+        }
+    }
+}
+
+@Composable
+private fun V2GlassToast(backdrop: Backdrop, message: String) {
+    V2GlassSurface(
+        backdrop = backdrop,
+        modifier = Modifier.height(48.dp).clip(RoundedCornerShape(20.dp)),
+        shape = RoundedCornerShape(20.dp),
+        tintColor = V2Green,
+        tintAlpha = 0.16f,
+        blurRadius = 16.dp,
+        lensRadius = 30.dp,
+        enableBlur = true,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(Icons.Rounded.CheckCircle, null, tint = V2Green, modifier = Modifier.size(18.dp))
+            Text(message, color = V2Text, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
