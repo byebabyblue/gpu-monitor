@@ -719,7 +719,7 @@ private fun V2StartupScreen(showSlowMessage: Boolean) {
                         painter = painterResource("app-icon.png"),
                         contentDescription = null,
                         tint = Color.Unspecified,
-                        modifier = Modifier.size(72.dp),
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
             }
