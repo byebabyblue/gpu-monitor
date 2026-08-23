@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.google.gson.JsonElement
@@ -65,7 +66,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.awt.Dimension
+import java.awt.EventQueue
 import java.awt.Rectangle
+import java.awt.SystemTray
+import java.awt.Window as AwtWindow
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.net.HttpURLConnection
@@ -302,6 +306,7 @@ private fun withShowcaseServer(servers: List<ServerSnapshot>): List<ServerSnapsh
 
 fun main() {
     val bundledBackend = BundledBackendController()
+    MonitorInstallation.ensureConfigFile()
     val launchBounds = MonitorInstallation.launchWindowBounds()
     application {
         val appIcon = painterResource("app-icon.png")
@@ -310,21 +315,87 @@ fun main() {
             width = launchBounds.width.dp,
             height = launchBounds.height.dp,
         )
+        val traySupported = remember { SystemTray.isSupported() }
+        var windowVisible by remember { mutableStateOf(true) }
+        var awtWindow by remember { mutableStateOf<AwtWindow?>(null) }
         var showCloseDialog by remember { mutableStateOf(false) }
+        var trayLightweightEnabled by remember { mutableStateOf(false) }
+        var trayLightweightDelayMinutes by remember {
+            mutableIntStateOf(DefaultTrayLightweightDelayMinutes)
+        }
+        var lightweightModeActive by remember { mutableStateOf(false) }
         var lastFloatingBounds by remember {
             mutableStateOf(Rectangle(launchBounds.x, launchBounds.y, launchBounds.width, launchBounds.height))
         }
-        Window(
-            onCloseRequest = { showCloseDialog = true },
-            title = "GPU Monitor · Kyant Glass",
-            state = windowState,
-            icon = appIcon,
+
+        val restoreWindow = {
+            lightweightModeActive = false
+            windowState.isMinimized = false
+            windowVisible = true
+            EventQueue.invokeLater {
+                awtWindow?.apply {
+                    isVisible = true
+                    toFront()
+                    requestFocus()
+                }
+            }
+        }
+        val exitGpuMonitor = {
+            bundledBackend.stop()
+            MonitorInstallation.persistWindowBoundsIfEnabled(lastFloatingBounds)
+            exitApplication()
+        }
+
+        LaunchedEffect(
+            windowVisible,
+            trayLightweightEnabled,
+            trayLightweightDelayMinutes,
         ) {
+            lightweightModeActive = false
+            if (!windowVisible && traySupported && trayLightweightEnabled) {
+                delay(normalizeTrayLightweightDelayMinutes(trayLightweightDelayMinutes) * 60_000L)
+                lightweightModeActive = true
+            }
+        }
+
+        if (traySupported) {
+            Tray(
+                icon = appIcon,
+                tooltip = if (lightweightModeActive) {
+                    "Xerver · 轻量化模式"
+                } else {
+                    "Xerver"
+                },
+                onAction = restoreWindow,
+                menu = {
+                    Item("打开 Xerver", onClick = restoreWindow)
+                    Separator()
+                    Item("直接退出", onClick = exitGpuMonitor)
+                },
+            )
+        }
+
+        if (!lightweightModeActive) {
+            Window(
+                onCloseRequest = { showCloseDialog = true },
+                title = "Xerver",
+                state = windowState,
+                icon = appIcon,
+                visible = windowVisible,
+            ) {
             LaunchedEffect(window) {
+                awtWindow = window
                 window.minimumSize = Dimension(
                     minOf(760, launchBounds.width),
                     minOf(560, launchBounds.height),
                 )
+            }
+            LaunchedEffect(windowVisible, window) {
+                if (windowVisible) {
+                    windowState.isMinimized = false
+                    window.toFront()
+                    window.requestFocus()
+                }
             }
             DisposableEffect(window) {
                 val listener = object : ComponentAdapter() {
@@ -344,21 +415,32 @@ fun main() {
                     override fun componentResized(event: ComponentEvent?) = captureFloatingBounds()
                 }
                 window.addComponentListener(listener)
-                onDispose { window.removeComponentListener(listener) }
+                onDispose {
+                    window.removeComponentListener(listener)
+                    if (awtWindow === window) awtWindow = null
+                }
             }
             LaunchedEffect(Unit) {
                 withContext(Dispatchers.IO) { bundledBackend.startIfAvailable() }
             }
-            GpuMonitorDashboardV2(
-                showCloseDialog = showCloseDialog,
-                onDismissCloseDialog = { showCloseDialog = false },
-                onMinimizeRequest = { windowState.isMinimized = true },
-                onExitRequest = {
-                    bundledBackend.stop()
-                    MonitorInstallation.persistWindowBoundsIfEnabled(lastFloatingBounds)
-                    exitApplication()
-                },
-            )
+                GpuMonitorDashboardV2(
+                    showCloseDialog = showCloseDialog,
+                    onDismissCloseDialog = { showCloseDialog = false },
+                    onTrayLightweightPolicyChanged = { enabled, delayMinutes ->
+                        trayLightweightEnabled = enabled
+                        trayLightweightDelayMinutes = normalizeTrayLightweightDelayMinutes(delayMinutes)
+                    },
+                    onMinimizeRequest = {
+                        MonitorInstallation.persistWindowBoundsIfEnabled(lastFloatingBounds)
+                        if (traySupported) {
+                            windowVisible = false
+                        } else {
+                            windowState.isMinimized = true
+                        }
+                    },
+                    onExitRequest = exitGpuMonitor,
+                )
+            }
         }
     }
 }
@@ -710,7 +792,7 @@ private fun GlassHeader(backdrop: Backdrop, online: Boolean, message: String) {
             Text("◈", color = AccentStrong, fontSize = 27.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(12.dp))
             Column {
-                Text("GPU Monitor", color = PanelText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("Xerver", color = PanelText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text("Kyant Liquid Glass prototype", color = PanelMuted, fontSize = 11.sp)
             }
             Spacer(Modifier.weight(1f))

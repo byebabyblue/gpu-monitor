@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════════╗
-║                    SSH GPU Monitor Dashboard                        ║
+║                         Xerver Dashboard                            ║
 ║          Real-time multi-server GPU / CPU / RAM / Disk monitor      ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -67,6 +67,8 @@ from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QDrag
 import http.server
 import threading
 
+GPU_HISTORY_RANGE_OPTIONS = (15, 60, 360, 1440)
+
 # pyqtgraph is optional – dashboard still works without the history chart
 try:
     import pyqtgraph as pg
@@ -106,7 +108,7 @@ class C:
 class RefreshSettings:
     gpu_active_interval = 3
     gpu_idle_interval = 60
-    disk_interval = 30
+    disk_interval = 21600
     process_interval = 6
     idle_threshold = 600  # 10 min before slow polling
     _config_path = None
@@ -130,7 +132,7 @@ class RefreshSettings:
             s.get("gpu_idle_interval", 60), 60, 5, 3600
         )
         cls.disk_interval = cls._bounded_number(
-            s.get("disk_interval", 30), 30, 5, 21600
+            s.get("disk_interval", 21600), 21600, 5, 86400
         )
         cls.process_interval = cls._bounded_number(
             s.get("process_interval", 6), 6, 2, 300
@@ -248,7 +250,7 @@ def _friendly_ssh_error(error, phase="connect"):
     """Translate common connection failures without hiding useful details."""
     if _is_timeout_error(error):
         if phase == "connect":
-            return "连接超时，无法获取服务器指纹"
+            return "连接超时"
         return "连接超时，服务器未响应"
 
     message = str(error).strip()
@@ -342,7 +344,7 @@ class SSHConnection:
 
         self.disconnect()
         client = paramiko.SSHClient()
-        # GPU Monitor owns its trust store.  Do not inherit host keys accepted
+        # Xerver owns its trust store.  Do not inherit host keys accepted
         # by OpenSSH, Xshell, or other applications, otherwise this app's
         # first-use fingerprint confirmation can be skipped unexpectedly.
         if self.known_hosts_path and self.known_hosts_path.is_file():
@@ -1788,7 +1790,7 @@ class Dashboard(QMainWindow):
         self._api_server = None
         self._api_thread = None
         self.setWindowTitle(
-            "SSH GPU Monitor — DEMO MODE" if demo else "SSH GPU Monitor"
+            "Xerver — DEMO MODE" if demo else "Xerver"
         )
 
         screen = QApplication.primaryScreen()
@@ -2029,7 +2031,7 @@ class Dashboard(QMainWindow):
 
         ico = QLabel("⚡")
         ico.setStyleSheet(f"font-size:24px; color:{C.ACCENT};")
-        ttl = QLabel("SSH GPU Monitor")
+        ttl = QLabel("Xerver")
         ttl.setStyleSheet(
             f"color:{C.TEXT}; font-size:19px; font-weight:700;"
         )
@@ -2665,7 +2667,7 @@ class Dashboard(QMainWindow):
             lambda v: setattr(RefreshSettings, 'gpu_active_interval', v) or RefreshSettings._auto_save()
         )
         _make_combo(
-            "Disk Poll:", [("10s",10), ("30s",30), ("1m",60), ("2m",120), ("5h",18000)],
+            "Disk Poll:", [("10s",10), ("60s",60), ("1h",3600), ("6h",21600), ("24h",86400)],
             RefreshSettings.disk_interval,
             lambda v: setattr(RefreshSettings, 'disk_interval', v) or RefreshSettings._auto_save()
         )
@@ -3447,6 +3449,35 @@ class Dashboard(QMainWindow):
         glass_tint = str(ui.get("glass_tint", "clear") or "clear").lower()
         if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:
             glass_tint = "clear"
+        legacy_card_blur = bool(
+            ui.get("readability_blur", False) or ui.get("readability_shade", False)
+        )
+        card_blur_level = self._coerce_blur_level(
+            ui.get("card_blur_level"), 2 if legacy_card_blur else 0
+        )
+        top_bar_blur_level = self._coerce_blur_level(
+            ui.get("top_bar_blur_level"), 2 if bool(ui.get("top_bar_blur", True)) else 0
+        )
+        bottom_bar_blur_level = self._coerce_blur_level(
+            ui.get("bottom_bar_blur_level"), 2 if bool(ui.get("bottom_bar_blur", True)) else 0
+        )
+        try:
+            tray_lightweight_delay_minutes = int(
+                ui.get("tray_lightweight_delay_minutes", 5)
+            )
+        except (TypeError, ValueError):
+            tray_lightweight_delay_minutes = 5
+        tray_lightweight_delay_minutes = max(1, min(1440, tray_lightweight_delay_minutes))
+        try:
+            gpu_history_range_minutes = int(
+                ui.get("gpu_history_range_minutes", 1440)
+            )
+        except (TypeError, ValueError):
+            gpu_history_range_minutes = 1440
+        gpu_history_range_minutes = min(
+            GPU_HISTORY_RANGE_OPTIONS,
+            key=lambda option: abs(option - gpu_history_range_minutes),
+        )
         hidden_servers_value = ui.get("hidden_servers", [])
         if not isinstance(hidden_servers_value, list):
             hidden_servers_value = []
@@ -3493,19 +3524,28 @@ class Dashboard(QMainWindow):
                 "wallpaper_path": str(ui.get("wallpaper_path", "") or ""),
                 "default_page": str(ui.get("default_page", "home") or "home"),
                 "autostart": bool(ui.get("autostart", False)),
-                "readability_blur": bool(ui.get("readability_blur", False)),
-                "readability_shade": bool(ui.get("readability_shade", ui.get("readability_blur", False))),
-                "text_mode": str(ui.get("text_mode", "light") or "light"),
-                "top_bar_blur": bool(ui.get("top_bar_blur", True)),
-                "bottom_bar_blur": bool(ui.get("bottom_bar_blur", True)),
+                "card_blur_level": card_blur_level,
+                "text_mode": str(ui.get("text_mode", "system") or "system"),
+                "top_bar_blur_level": top_bar_blur_level,
+                "bottom_bar_blur_level": bottom_bar_blur_level,
                 "glass_tint": glass_tint,
                 "font_scale": font_scale,
                 "hidden_servers": hidden_servers,
                 "remember_window_bounds": bool(ui.get("remember_window_bounds", False)),
+                "tray_lightweight_enabled": bool(ui.get("tray_lightweight_enabled", False)),
+                "tray_lightweight_delay_minutes": tray_lightweight_delay_minutes,
+                "gpu_history_range_minutes": gpu_history_range_minutes,
                 "window_bounds": window_bounds,
             },
             "servers": servers,
         }
+
+    @staticmethod
+    def _coerce_blur_level(value, fallback):
+        try:
+            return max(0, min(3, int(value)))
+        except (TypeError, ValueError):
+            return fallback
 
     @staticmethod
     def _history_to_dict(info):
@@ -3563,7 +3603,7 @@ class Dashboard(QMainWindow):
         numeric_fields = {
             "gpu_active_interval": (3, 1, 300),
             "gpu_idle_interval": (60, 5, 3600),
-            "disk_interval": (30, 5, 21600),
+            "disk_interval": (21600, 5, 86400),
             "process_interval": (6, 2, 300),
             "idle_threshold": (600, 30, 86400),
         }
@@ -3609,19 +3649,37 @@ class Dashboard(QMainWindow):
             enabled = bool(ui_payload["autostart"])
             self._set_autostart(enabled)
             ui["autostart"] = enabled
-        if "readability_blur" in ui_payload:
-            ui["readability_blur"] = bool(ui_payload["readability_blur"])
-        if "readability_shade" in ui_payload:
-            ui["readability_shade"] = bool(ui_payload["readability_shade"])
+        if "readability_blur" in ui_payload or "readability_shade" in ui_payload:
+            legacy_enabled = bool(ui_payload.get("readability_blur", False)) or bool(
+                ui_payload.get("readability_shade", False)
+            )
+            ui["card_blur_level"] = 2 if legacy_enabled else 0
         if "text_mode" in ui_payload:
-            text_mode = str(ui_payload.get("text_mode", "light")).lower()
-            if text_mode not in {"light", "dark"}:
+            text_mode = str(ui_payload.get("text_mode", "system")).lower()
+            if text_mode not in {"system", "light", "dark"}:
                 raise ValueError("Unknown text color mode")
             ui["text_mode"] = text_mode
         if "top_bar_blur" in ui_payload:
-            ui["top_bar_blur"] = bool(ui_payload["top_bar_blur"])
+            ui["top_bar_blur_level"] = 2 if bool(ui_payload["top_bar_blur"]) else 0
         if "bottom_bar_blur" in ui_payload:
-            ui["bottom_bar_blur"] = bool(ui_payload["bottom_bar_blur"])
+            ui["bottom_bar_blur_level"] = 2 if bool(ui_payload["bottom_bar_blur"]) else 0
+        for blur_field in ("card_blur_level", "top_bar_blur_level", "bottom_bar_blur_level"):
+            if blur_field not in ui_payload:
+                continue
+            try:
+                blur_level = int(ui_payload[blur_field])
+            except (TypeError, ValueError):
+                raise ValueError("Blur level must be a number")
+            if not 0 <= blur_level <= 3:
+                raise ValueError("Blur level must be between 0 and 3")
+            ui[blur_field] = blur_level
+        if any(field in ui_payload for field in ("readability_blur", "readability_shade", "card_blur_level")):
+            ui.pop("readability_blur", None)
+            ui.pop("readability_shade", None)
+        if "top_bar_blur" in ui_payload or "top_bar_blur_level" in ui_payload:
+            ui.pop("top_bar_blur", None)
+        if "bottom_bar_blur" in ui_payload or "bottom_bar_blur_level" in ui_payload:
+            ui.pop("bottom_bar_blur", None)
         if "glass_tint" in ui_payload:
             glass_tint = str(ui_payload.get("glass_tint", "clear")).lower()
             if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:
@@ -3636,6 +3694,24 @@ class Dashboard(QMainWindow):
             ))
         if "remember_window_bounds" in ui_payload:
             ui["remember_window_bounds"] = bool(ui_payload["remember_window_bounds"])
+        if "tray_lightweight_enabled" in ui_payload:
+            ui["tray_lightweight_enabled"] = bool(ui_payload["tray_lightweight_enabled"])
+        if "tray_lightweight_delay_minutes" in ui_payload:
+            try:
+                tray_lightweight_delay_minutes = int(ui_payload["tray_lightweight_delay_minutes"])
+            except (TypeError, ValueError):
+                raise ValueError("Tray lightweight delay must be a number")
+            if not 1 <= tray_lightweight_delay_minutes <= 1440:
+                raise ValueError("Tray lightweight delay must be between 1 and 1440 minutes")
+            ui["tray_lightweight_delay_minutes"] = tray_lightweight_delay_minutes
+        if "gpu_history_range_minutes" in ui_payload:
+            try:
+                gpu_history_range_minutes = int(ui_payload["gpu_history_range_minutes"])
+            except (TypeError, ValueError):
+                raise ValueError("GPU history range must be a number")
+            if gpu_history_range_minutes not in GPU_HISTORY_RANGE_OPTIONS:
+                raise ValueError("GPU history range must be 15, 60, 360, or 1440 minutes")
+            ui["gpu_history_range_minutes"] = gpu_history_range_minutes
         if "window_bounds" in ui_payload:
             window_bounds = ui_payload["window_bounds"]
             if window_bounds is None:
@@ -3681,7 +3757,8 @@ class Dashboard(QMainWindow):
             return
         import winreg
 
-        value_name = "GPU Monitor"
+        value_name = "Xerver"
+        legacy_value_name = "GPU Monitor"
         run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
         root = Path(self._cfg_path).resolve().parent
         launcher = root / "start_gpu_monitor.ps1"
@@ -3708,11 +3785,16 @@ class Dashboard(QMainWindow):
                 else:
                     command = f'"{frontend_path}"'
                 winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, command)
-            else:
                 try:
-                    winreg.DeleteValue(key, value_name)
+                    winreg.DeleteValue(key, legacy_value_name)
                 except FileNotFoundError:
                     pass
+            else:
+                for obsolete_name in (value_name, legacy_value_name):
+                    try:
+                        winreg.DeleteValue(key, obsolete_name)
+                    except FileNotFoundError:
+                        pass
 
     def _api_add_server(self, payload):
         name = str(payload.get("name", "")).strip()
@@ -4015,7 +4097,7 @@ class Dashboard(QMainWindow):
             ],
             "running_tasks": [task_to_dict(task) for task in info.running_tasks],
             "queued_tasks": [task_to_dict(task) for task in info.queued_tasks],
-            "last_update": str(info.last_update) if info.last_update else None,
+            "last_update": info.last_update.isoformat(sep=" ", timespec="seconds") if info.last_update else None,
         }
 
     def resizeEvent(self, event):
@@ -4248,7 +4330,7 @@ _GLOBAL_CSS = f"""
 # ═══════════════════════════════════════════════════════════════════════
 
 def main():
-    ap = argparse.ArgumentParser(description="SSH GPU Monitor Dashboard")
+    ap = argparse.ArgumentParser(description="Xerver server monitoring backend")
     ap.add_argument("-c", "--config", default="config.json",
                     help="Path to server config JSON (default: config.json)")
     ap.add_argument("--demo", action="store_true",

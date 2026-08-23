@@ -2,7 +2,7 @@
   "settings": {
     "gpu_active_interval": 3,
     "gpu_idle_interval": 60,
-    "disk_interval": 30,
+    "disk_interval": 21600,
     "process_interval": 6,
     "idle_threshold": 600,
     "api_port": 8766
@@ -11,14 +11,16 @@
     "wallpaper_path": "",
     "default_page": "home",
     "autostart": false,
-    "readability_blur": false,
-    "readability_shade": false,
+    "card_blur_level": 0,
     "font_scale": 1.08,
-    "top_bar_blur": true,
-    "text_mode": "light",
-    "bottom_bar_blur": true,
+    "top_bar_blur_level": 2,
+    "text_mode": "system",
+    "bottom_bar_blur_level": 2,
     "hidden_servers": [],
-    "remember_window_bounds": false
+    "remember_window_bounds": false,
+    "tray_lightweight_enabled": false,
+    "tray_lightweight_delay_minutes": 5,
+    "gpu_history_range_minutes": 1440
   },
   "servers": [
     {

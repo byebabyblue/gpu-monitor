@@ -38,6 +38,35 @@ class WallpaperManagerTest {
     }
 
     @Test
+    fun migratesTheLegacyOriginalInsteadOfReusingItsDownscaledDisplayCopy() {
+        val temporaryRoot = Files.createTempDirectory("xerver-wallpaper-migration-test").toFile()
+        val managedRoot = temporaryRoot.resolve("managed")
+        val legacyRoot = temporaryRoot.resolve("legacy")
+        val legacyOriginal = legacyRoot.resolve("original/legacyhash.png")
+        val legacyDisplay = legacyRoot.resolve("display/legacyhash-1920x1080.png")
+        try {
+            legacyOriginal.parentFile.mkdirs()
+            legacyDisplay.parentFile.mkdirs()
+            ImageIO.write(BufferedImage(320, 180, BufferedImage.TYPE_INT_RGB), "png", legacyOriginal)
+            ImageIO.write(BufferedImage(80, 45, BufferedImage.TYPE_INT_RGB), "png", legacyDisplay)
+            System.setProperty("gpu.monitor.wallpaper.root", managedRoot.absolutePath)
+            System.setProperty("gpu.monitor.legacy.wallpaper.root", legacyRoot.absolutePath)
+
+            val asset = WallpaperManager.importWallpaper(legacyDisplay.absolutePath).getOrThrow()
+            val migratedOriginal = ImageIO.read(java.io.File(asset.originalPath))
+
+            assertEquals(320, migratedOriginal.width)
+            assertEquals(180, migratedOriginal.height)
+            assertTrue(java.io.File(asset.displayPath).canonicalPath.startsWith(managedRoot.canonicalPath))
+            assertTrue(legacyOriginal.isFile, "Migration must not remove the user's previous wallpaper")
+        } finally {
+            System.clearProperty("gpu.monitor.wallpaper.root")
+            System.clearProperty("gpu.monitor.legacy.wallpaper.root")
+            temporaryRoot.deleteRecursively()
+        }
+    }
+
+    @Test
     fun releaseNotesAreConvertedToReadablePlainText() {
         val notes = UpdateChecker.plainTextReleaseNotes(
             """

@@ -12,6 +12,10 @@ ssh_known_hosts
 **/ssh_known_hosts
 **/.ssh/
 
+# Personal wallpaper libraries are runtime-only and must never be published
+wallpapers/
+**/wallpapers/
+
 # Local monitoring data and recovery copies
 backups/
 command_analysis_queue.jsonl

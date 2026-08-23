@@ -3,7 +3,7 @@ import java.awt.Desktop
 import java.net.HttpURLConnection
 import java.net.URI
 
-internal const val GpuMonitorVersion = "0.2.7"
+internal const val GpuMonitorVersion = "1.0.0"
 internal const val GpuMonitorRepositoryUrl = "https://github.com/byebabyblue/gpu-monitor"
 internal const val GpuMonitorReleasesUrl = "$GpuMonitorRepositoryUrl/releases"
 
@@ -27,7 +27,7 @@ internal object UpdateChecker {
             connection.connectTimeout = 7_000
             connection.readTimeout = 7_000
             connection.setRequestProperty("Accept", "application/vnd.github+json")
-            connection.setRequestProperty("User-Agent", "GPU-Monitor/$GpuMonitorVersion")
+            connection.setRequestProperty("User-Agent", "Xerver/$GpuMonitorVersion")
 
             val status = connection.responseCode
             val response = (if (status in 200..299) connection.inputStream else connection.errorStream)

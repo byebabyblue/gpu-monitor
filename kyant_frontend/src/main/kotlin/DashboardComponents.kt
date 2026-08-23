@@ -30,6 +30,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,12 +74,14 @@ internal val V2Green = Color(0xFF61E4A6)
 internal val V2Yellow = Color(0xFFFFC76A)
 internal val V2Red = Color(0xFFFF778D)
 internal val V2Cyan = Color(0xFF66DFE8)
-internal val LocalV2ReadabilityBlur = staticCompositionLocalOf { false }
-internal val LocalV2ReadabilityShade = staticCompositionLocalOf { false }
+internal val LocalV2CardBlurLevel = staticCompositionLocalOf { BlurLevelOff }
 internal val LocalV2DarkText = staticCompositionLocalOf { false }
-internal val LocalV2TopBarBlur = staticCompositionLocalOf { true }
-internal val LocalV2BottomBarBlur = staticCompositionLocalOf { true }
+internal val LocalV2TopBarBlurLevel = staticCompositionLocalOf { BlurLevelMedium }
+internal val LocalV2BottomBarBlurLevel = staticCompositionLocalOf { BlurLevelMedium }
 internal val LocalV2GlassTint = staticCompositionLocalOf { "clear" }
+
+internal fun blurRadiusForLevel(baseRadius: Dp, level: Int): Dp =
+    (baseRadius.value * blurScaleForLevel(level)).dp
 
 internal val V2Text: Color
     @Composable
@@ -106,21 +109,41 @@ private val chartColors = listOf(
     Color(0xFF9ADB70),
 )
 
+private data class V2WallpaperFrame(
+    val path: String?,
+    val bitmap: ImageBitmap?,
+)
+
 @Composable
-internal fun V2Backdrop(backdrop: LayerBackdrop, wallpaperPath: String) {
+internal fun V2Backdrop(
+    backdrop: LayerBackdrop,
+    wallpaperPath: String,
+    onWallpaperReady: (String) -> Unit = {},
+) {
     val darkText = LocalV2DarkText.current
-    val wallpaper by produceState<ImageBitmap?>(initialValue = null, wallpaperPath) {
-        value = if (wallpaperPath.isBlank()) {
+    val latestOnWallpaperReady by rememberUpdatedState(onWallpaperReady)
+    val wallpaperFrame by produceState(
+        initialValue = V2WallpaperFrame(path = null, bitmap = null),
+        wallpaperPath,
+    ) {
+        val requestedPath = wallpaperPath
+        val bitmap = if (requestedPath.isBlank()) {
             null
         } else {
             withContext(Dispatchers.IO) {
                 runCatching {
-                    org.jetbrains.skia.Image.makeFromEncoded(File(wallpaperPath).readBytes()).toComposeImageBitmap()
+                    org.jetbrains.skia.Image.makeFromEncoded(File(requestedPath).readBytes()).toComposeImageBitmap()
                 }.getOrNull()
             }
         }
+        value = V2WallpaperFrame(path = requestedPath, bitmap = bitmap)
     }
-    val loadedWallpaper = wallpaper
+    LaunchedEffect(wallpaperFrame.path, wallpaperPath) {
+        if (wallpaperFrame.path == wallpaperPath) {
+            latestOnWallpaperReady(wallpaperPath)
+        }
+    }
+    val loadedWallpaper = wallpaperFrame.bitmap
     Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
         if (loadedWallpaper != null) {
             Image(
@@ -172,12 +195,16 @@ internal fun V2GlassSurface(
     tintAlpha: Float = 0.25f,
     blurRadius: Dp = 14.dp,
     lensRadius: Dp = 29.dp,
-    enableBlur: Boolean? = null,
+    lensAmount: Dp? = null,
+    lensDepthEffect: Boolean = false,
+    blurLevelOverride: Int? = null,
     content: @Composable () -> Unit,
 ) {
     val darkText = LocalV2DarkText.current
-    val surfaceBlur = enableBlur ?: LocalV2ReadabilityBlur.current
-    val surfaceShade = enableBlur == null && LocalV2ReadabilityShade.current
+    val surfaceBlurRadius = blurRadiusForLevel(
+        baseRadius = blurRadius,
+        level = blurLevelOverride ?: LocalV2CardBlurLevel.current,
+    )
     val tintMode = LocalV2GlassTint.current
     val themedTint = when (tintMode) {
         "ice" -> Color(0xFF8DB7FF)
@@ -205,10 +232,18 @@ internal fun V2GlassSurface(
                 shape = { shape },
                 effects = {
                     vibrancy()
-                    if (surfaceBlur) blur(blurRadius.toPx())
+                    if (surfaceBlurRadius > 0.dp) blur(surfaceBlurRadius.toPx())
+                    val resolvedLensHeight = if (pureGlass) 36.dp else lensRadius
+                    val resolvedLensAmount = if (pureGlass) {
+                        25.dp
+                    } else {
+                        lensAmount ?: (lensRadius.value * 0.72f).dp
+                    }
                     lens(
-                        if (pureGlass) 36.dp.toPx() else lensRadius.toPx(),
-                        if (pureGlass) 25.dp.toPx() else (lensRadius.value * 0.72f).dp.toPx(),
+                        resolvedLensHeight.toPx(),
+                        resolvedLensAmount.toPx(),
+                        lensDepthEffect,
+                        false,
                     )
                 },
                 highlight = { Highlight.Ambient },
@@ -238,11 +273,6 @@ internal fun V2GlassSurface(
                             )
                         )
                     }
-                    if (surfaceShade) {
-                        drawRect(
-                            (if (darkText) Color.White else Color.Black).copy(alpha = 0.15f)
-                        )
-                    }
                 },
             ),
         content = { content() },
@@ -264,14 +294,15 @@ internal fun V2PureGlassSurface(
             modifier = modifier,
             shape = shape,
             tintAlpha = 0.20f,
-            enableBlur = if (readabilityAware) null else false,
+            blurLevelOverride = if (readabilityAware) null else BlurLevelOff,
             content = content,
         )
         return
     }
-    val useReadabilityBlur = readabilityAware && LocalV2ReadabilityBlur.current
-    val useReadabilityShade = readabilityAware && LocalV2ReadabilityShade.current
-    val darkText = LocalV2DarkText.current
+    val cardBlurRadius = blurRadiusForLevel(
+        baseRadius = 14.dp,
+        level = if (readabilityAware) LocalV2CardBlurLevel.current else BlurLevelOff,
+    )
     Box(
         modifier = modifier
             .clip(shape)
@@ -280,17 +311,12 @@ internal fun V2PureGlassSurface(
                 shape = { shape },
                 effects = {
                     vibrancy()
-                    if (useReadabilityBlur) blur(14.dp.toPx())
+                    if (cardBlurRadius > 0.dp) blur(cardBlurRadius.toPx())
                     lens(36.dp.toPx(), 25.dp.toPx())
                 },
                 highlight = { Highlight.Ambient },
                 onDrawSurface = {
                     drawRect(Color.White.copy(alpha = 0.012f))
-                    if (useReadabilityShade) {
-                        drawRect(
-                            (if (darkText) Color.White else Color.Black).copy(alpha = 0.15f)
-                        )
-                    }
                 },
             ),
         content = { content() },
@@ -305,7 +331,7 @@ internal fun V2Header(
     apiMessage: String,
     onRefresh: () -> Unit,
 ) {
-    val topBarBlur = LocalV2TopBarBlur.current
+    val topBarBlurLevel = LocalV2TopBarBlurLevel.current
     V2GlassSurface(
         backdrop = backdrop,
         modifier = Modifier.fillMaxWidth().height(72.dp),
@@ -314,7 +340,7 @@ internal fun V2Header(
         tintAlpha = 0.055f,
         blurRadius = 13.dp,
         lensRadius = 38.dp,
-        enableBlur = topBarBlur,
+        blurLevelOverride = topBarBlurLevel,
     ) {
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 23.dp),
@@ -359,7 +385,8 @@ internal fun V2BottomBar(
     selectedTab: V2Tab,
     onSelected: (V2Tab) -> Unit,
 ) {
-    val bottomBarBlur = LocalV2BottomBarBlur.current
+    val bottomBarBlurLevel = LocalV2BottomBarBlurLevel.current
+    val bottomSliderBlurRadius = blurRadiusForLevel(10.dp, bottomBarBlurLevel)
     val clickBlocker = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 110.dp),
@@ -372,8 +399,10 @@ internal fun V2BottomBar(
             tintColor = Color.White,
             tintAlpha = 0.055f,
             blurRadius = 13.dp,
-            lensRadius = 40.dp,
-            enableBlur = bottomBarBlur,
+            lensRadius = 20.dp,
+            lensAmount = 12.dp,
+            lensDepthEffect = true,
+            blurLevelOverride = bottomBarBlurLevel,
         ) {
             Box(Modifier.fillMaxSize()) {
                 Box(
@@ -404,8 +433,8 @@ internal fun V2BottomBar(
                             shape = { sliderShape },
                             effects = {
                                 vibrancy()
-                                if (bottomBarBlur) blur(10.dp.toPx())
-                                lens(33.dp.toPx(), 23.dp.toPx())
+                                if (bottomSliderBlurRadius > 0.dp) blur(bottomSliderBlurRadius.toPx())
+                                lens(16.dp.toPx(), 10.dp.toPx(), true, false)
                             },
                             highlight = { Highlight.Ambient },
                             onDrawSurface = {
@@ -469,7 +498,7 @@ internal fun V2SegmentedSlider(
     height: Dp = 38.dp,
 ) {
     if (labels.isEmpty()) return
-    val readabilityBlur = LocalV2ReadabilityBlur.current
+    val sliderBlurRadius = blurRadiusForLevel(8.dp, LocalV2CardBlurLevel.current)
     val safeIndex = selectedIndex.coerceIn(0, labels.lastIndex)
     val shape = RoundedCornerShape(height / 2)
     BoxWithConstraints(
@@ -490,7 +519,7 @@ internal fun V2SegmentedSlider(
                     shape = { shape },
                     effects = {
                         vibrancy()
-                        if (readabilityBlur) blur(8.dp.toPx())
+                        if (sliderBlurRadius > 0.dp) blur(sliderBlurRadius.toPx())
                         lens(24.dp.toPx(), 17.dp.toPx())
                     },
                     highlight = { Highlight.Ambient },
@@ -612,7 +641,7 @@ internal fun V2ServerSidebar(
     onSelected: (Int) -> Unit,
     modifier: Modifier,
 ) {
-    val readabilityBlur = LocalV2ReadabilityBlur.current
+    val sliderBlurRadius = blurRadiusForLevel(9.dp, LocalV2CardBlurLevel.current)
     val itemHeight = 66.dp
     val itemSpacing = 8.dp
     val sliderOffset by animateDpAsState(
@@ -641,7 +670,7 @@ internal fun V2ServerSidebar(
                             shape = { sliderShape },
                             effects = {
                                 vibrancy()
-                                if (readabilityBlur) blur(9.dp.toPx())
+                                if (sliderBlurRadius > 0.dp) blur(sliderBlurRadius.toPx())
                                 lens(27.dp.toPx(), 19.dp.toPx())
                             },
                             highlight = { Highlight.Ambient },

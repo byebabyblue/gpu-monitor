@@ -4,6 +4,23 @@ import kotlin.test.assertTrue
 
 class GpuHistoryRangeTest {
     @Test
+    fun defaultsToTheFullDayAndNormalizesStoredValues() {
+        assertEquals(24 * 60, UiSettings().gpuHistoryRangeMinutes)
+        assertEquals(listOf(15, 60, 360, 1440), GpuHistoryRangeOptions)
+        assertEquals(15, normalizeGpuHistoryRangeMinutes(20))
+        assertEquals(60, normalizeGpuHistoryRangeMinutes(58))
+        assertEquals(360, normalizeGpuHistoryRangeMinutes(400))
+        assertEquals(1440, normalizeGpuHistoryRangeMinutes(1200))
+    }
+
+    @Test
+    fun lastUpdateIsDisplayedOnlyToSeconds() {
+        assertEquals("2026-08-23 13:27:42", formatLastUpdate("2026-08-23 13:27:42.987654"))
+        assertEquals("2026-08-23 13:27:42", formatLastUpdate("2026-08-23T13:27:42+08:00"))
+        assertEquals("刚刚", formatLastUpdate(""))
+    }
+
+    @Test
     fun supportsEveryGpuHistoryRangeLabel() {
         assertEquals("15min", gpuHistoryRangeLabel(15))
         assertEquals("1h", gpuHistoryRangeLabel(60))

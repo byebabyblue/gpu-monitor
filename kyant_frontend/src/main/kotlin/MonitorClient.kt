@@ -6,9 +6,42 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import kotlin.math.abs
 import kotlin.math.sin
 
 internal const val DefaultApiPort = 8766
+internal const val BlurLevelOff = 0
+internal const val BlurLevelLight = 1
+internal const val BlurLevelMedium = 2
+internal const val BlurLevelHeavy = 3
+internal const val DefaultTrayLightweightDelayMinutes = 5
+internal const val DefaultGpuHistoryRangeMinutes = 24 * 60
+internal val GpuHistoryRangeOptions = listOf(15, 60, 6 * 60, DefaultGpuHistoryRangeMinutes)
+
+internal fun normalizeBlurLevel(level: Int): Int = level.coerceIn(BlurLevelOff, BlurLevelHeavy)
+
+internal fun resolveBlurLevel(storedLevel: Int?, legacyEnabled: Boolean): Int =
+    storedLevel?.let(::normalizeBlurLevel) ?: if (legacyEnabled) BlurLevelMedium else BlurLevelOff
+
+internal fun blurScaleForLevel(level: Int): Float = when (normalizeBlurLevel(level)) {
+    BlurLevelLight -> 0.55f
+    BlurLevelMedium -> 1.0f
+    BlurLevelHeavy -> 1.45f
+    else -> 0f
+}
+
+internal fun normalizeTrayLightweightDelayMinutes(minutes: Int): Int = minutes.coerceIn(1, 1440)
+
+internal fun normalizeGpuHistoryRangeMinutes(minutes: Int): Int =
+    GpuHistoryRangeOptions.minByOrNull { option -> abs(option - minutes) }
+        ?: DefaultGpuHistoryRangeMinutes
+
+internal fun formatLastUpdate(value: String): String {
+    val trimmed = value.trim()
+    if (trimmed.isBlank()) return "刚刚"
+    val match = Regex("""^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})""").find(trimmed)
+    return match?.let { "${it.groupValues[1]} ${it.groupValues[2]}" } ?: trimmed
+}
 
 internal data class MonitorGpu(
     val index: Int,
@@ -91,7 +124,7 @@ internal data class GpuHistorySeries(
 internal data class PollSettings(
     val gpuActiveSeconds: Int = 3,
     val gpuIdleSeconds: Int = 60,
-    val diskSeconds: Int = 30,
+    val diskSeconds: Int = 21600,
     val processSeconds: Int = 6,
     val idleThresholdSeconds: Int = 600,
     val apiPort: Int = DefaultApiPort,
@@ -101,15 +134,17 @@ internal data class UiSettings(
     val wallpaperPath: String = "",
     val defaultPage: String = "home",
     val autostart: Boolean = false,
-    val readabilityBlur: Boolean = false,
-    val readabilityShade: Boolean = false,
-    val textMode: String = "light",
-    val topBarBlur: Boolean = true,
-    val bottomBarBlur: Boolean = true,
+    val cardBlurLevel: Int = BlurLevelOff,
+    val textMode: String = "system",
+    val topBarBlurLevel: Int = BlurLevelMedium,
+    val bottomBarBlurLevel: Int = BlurLevelMedium,
     val glassTint: String = "clear",
     val fontScale: Double = 1.08,
     val hiddenServers: List<String> = emptyList(),
     val rememberWindowBounds: Boolean = false,
+    val trayLightweightEnabled: Boolean = false,
+    val trayLightweightDelayMinutes: Int = DefaultTrayLightweightDelayMinutes,
+    val gpuHistoryRangeMinutes: Int = DefaultGpuHistoryRangeMinutes,
     val windowBounds: MonitorWindowBounds? = null,
 )
 
@@ -211,17 +246,25 @@ internal object MonitorClient {
             addProperty("wallpaper_path", ui.wallpaperPath)
             addProperty("default_page", ui.defaultPage)
             addProperty("autostart", ui.autostart)
-            addProperty("readability_blur", ui.readabilityBlur)
-            addProperty("readability_shade", ui.readabilityShade)
+            addProperty("card_blur_level", normalizeBlurLevel(ui.cardBlurLevel))
             addProperty("text_mode", ui.textMode)
-            addProperty("top_bar_blur", ui.topBarBlur)
-            addProperty("bottom_bar_blur", ui.bottomBarBlur)
+            addProperty("top_bar_blur_level", normalizeBlurLevel(ui.topBarBlurLevel))
+            addProperty("bottom_bar_blur_level", normalizeBlurLevel(ui.bottomBarBlurLevel))
             addProperty("glass_tint", ui.glassTint)
             addProperty("font_scale", ui.fontScale)
             add("hidden_servers", JsonArray().apply {
                 ui.hiddenServers.distinct().forEach { name -> add(name) }
             })
             addProperty("remember_window_bounds", ui.rememberWindowBounds)
+            addProperty("tray_lightweight_enabled", ui.trayLightweightEnabled)
+            addProperty(
+                "tray_lightweight_delay_minutes",
+                normalizeTrayLightweightDelayMinutes(ui.trayLightweightDelayMinutes),
+            )
+            addProperty(
+                "gpu_history_range_minutes",
+                normalizeGpuHistoryRangeMinutes(ui.gpuHistoryRangeMinutes),
+            )
             ui.windowBounds?.let { bounds ->
                 add("window_bounds", JsonObject().apply {
                     addProperty("x", bounds.x)
@@ -240,6 +283,18 @@ internal object MonitorClient {
             config = parseConfig(response.objectValue("config")),
             restartRequired = response.booleanValue("restart_required"),
         )
+    }
+
+    fun saveGpuHistoryRange(port: Int, rangeMinutes: Int): Result<Unit> = runCatching {
+        val body = JsonObject().apply {
+            add("ui", JsonObject().apply {
+                addProperty(
+                    "gpu_history_range_minutes",
+                    normalizeGpuHistoryRangeMinutes(rangeMinutes),
+                )
+            })
+        }
+        request(port, "POST", "/api/settings", body)
     }
 
     fun addServer(port: Int, draft: ServerDraft): Result<String> = runCatching {
@@ -368,7 +423,7 @@ internal object MonitorClient {
             polling = PollSettings(
                 gpuActiveSeconds = settings.intValue("gpu_active_interval", 3),
                 gpuIdleSeconds = settings.intValue("gpu_idle_interval", 60),
-                diskSeconds = settings.intValue("disk_interval", 30),
+                diskSeconds = settings.intValue("disk_interval", 21600),
                 processSeconds = settings.intValue("process_interval", 6),
                 idleThresholdSeconds = settings.intValue("idle_threshold", 600),
                 apiPort = settings.intValue("api_port", DefaultApiPort),
@@ -377,21 +432,32 @@ internal object MonitorClient {
                 wallpaperPath = ui.stringValue("wallpaper_path"),
                 defaultPage = ui.stringValue("default_page", "home"),
                 autostart = ui.booleanValue("autostart"),
-                readabilityBlur = ui.booleanValue("readability_blur"),
-                readabilityShade = if (ui.value("readability_shade") != null) {
-                    ui.booleanValue("readability_shade")
-                } else {
-                    ui.booleanValue("readability_blur")
-                },
-                textMode = ui.stringValue("text_mode", "light"),
-                topBarBlur = ui.booleanValue("top_bar_blur", true),
-                bottomBarBlur = ui.booleanValue("bottom_bar_blur", true),
+                cardBlurLevel = resolveBlurLevel(
+                    storedLevel = ui.value("card_blur_level")?.let { ui.intValue("card_blur_level") },
+                    legacyEnabled = ui.booleanValue("readability_blur") || ui.booleanValue("readability_shade"),
+                ),
+                textMode = ui.stringValue("text_mode", "system"),
+                topBarBlurLevel = resolveBlurLevel(
+                    storedLevel = ui.value("top_bar_blur_level")?.let { ui.intValue("top_bar_blur_level") },
+                    legacyEnabled = ui.booleanValue("top_bar_blur", true),
+                ),
+                bottomBarBlurLevel = resolveBlurLevel(
+                    storedLevel = ui.value("bottom_bar_blur_level")?.let { ui.intValue("bottom_bar_blur_level") },
+                    legacyEnabled = ui.booleanValue("bottom_bar_blur", true),
+                ),
                 glassTint = ui.stringValue("glass_tint", "clear"),
                 fontScale = ui.doubleValue("font_scale", 1.08).coerceIn(0.90, 1.35),
                 hiddenServers = ui.arrayValue("hidden_servers").mapNotNull { element ->
                     runCatching { element.asString.trim() }.getOrNull()?.takeIf { it.isNotBlank() }
                 }.distinct(),
                 rememberWindowBounds = ui.booleanValue("remember_window_bounds"),
+                trayLightweightEnabled = ui.booleanValue("tray_lightweight_enabled"),
+                trayLightweightDelayMinutes = normalizeTrayLightweightDelayMinutes(
+                    ui.intValue("tray_lightweight_delay_minutes", DefaultTrayLightweightDelayMinutes)
+                ),
+                gpuHistoryRangeMinutes = normalizeGpuHistoryRangeMinutes(
+                    ui.intValue("gpu_history_range_minutes", DefaultGpuHistoryRangeMinutes)
+                ),
                 windowBounds = ui.value("window_bounds")
                     ?.takeIf { it.isJsonObject }
                     ?.asJsonObject

@@ -16,4 +16,4 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "gpu-monitor-kyant"
+rootProject.name = "xerver"
