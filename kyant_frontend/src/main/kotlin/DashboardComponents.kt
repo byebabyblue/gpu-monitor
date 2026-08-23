@@ -30,6 +30,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,21 +107,41 @@ private val chartColors = listOf(
     Color(0xFF9ADB70),
 )
 
+private data class V2WallpaperFrame(
+    val path: String?,
+    val bitmap: ImageBitmap?,
+)
+
 @Composable
-internal fun V2Backdrop(backdrop: LayerBackdrop, wallpaperPath: String) {
+internal fun V2Backdrop(
+    backdrop: LayerBackdrop,
+    wallpaperPath: String,
+    onWallpaperReady: (String) -> Unit = {},
+) {
     val darkText = LocalV2DarkText.current
-    val wallpaper by produceState<ImageBitmap?>(initialValue = null, wallpaperPath) {
-        value = if (wallpaperPath.isBlank()) {
+    val latestOnWallpaperReady by rememberUpdatedState(onWallpaperReady)
+    val wallpaperFrame by produceState(
+        initialValue = V2WallpaperFrame(path = null, bitmap = null),
+        wallpaperPath,
+    ) {
+        val requestedPath = wallpaperPath
+        val bitmap = if (requestedPath.isBlank()) {
             null
         } else {
             withContext(Dispatchers.IO) {
                 runCatching {
-                    org.jetbrains.skia.Image.makeFromEncoded(File(wallpaperPath).readBytes()).toComposeImageBitmap()
+                    org.jetbrains.skia.Image.makeFromEncoded(File(requestedPath).readBytes()).toComposeImageBitmap()
                 }.getOrNull()
             }
         }
+        value = V2WallpaperFrame(path = requestedPath, bitmap = bitmap)
     }
-    val loadedWallpaper = wallpaper
+    LaunchedEffect(wallpaperFrame.path, wallpaperPath) {
+        if (wallpaperFrame.path == wallpaperPath) {
+            latestOnWallpaperReady(wallpaperPath)
+        }
+    }
+    val loadedWallpaper = wallpaperFrame.bitmap
     Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
         if (loadedWallpaper != null) {
             Image(

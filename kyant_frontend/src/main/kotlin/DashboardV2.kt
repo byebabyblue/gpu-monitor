@@ -1,3 +1,14 @@
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -47,9 +58,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -91,6 +109,15 @@ internal enum class V2Tab(
 
 private val V2FontScaleOptions = listOf(0.90, 1.00, 1.08, 1.16, 1.25, 1.35)
 
+internal fun isStartupAppearanceReady(
+    configLoaded: Boolean,
+    configuredWallpaperPath: String,
+    readyWallpaperPath: String?,
+    minimumDurationElapsed: Boolean,
+): Boolean = configLoaded &&
+    minimumDurationElapsed &&
+    readyWallpaperPath == configuredWallpaperPath
+
 @Composable
 internal fun GpuMonitorDashboardV2(
     showCloseDialog: Boolean,
@@ -129,6 +156,37 @@ internal fun GpuMonitorDashboardV2(
     var hostKeyBusy by remember { mutableStateOf(false) }
     var hostKeyMessage by remember { mutableStateOf("") }
     var saveToast by remember { mutableStateOf("") }
+    var startupWallpaperReadyPath by remember { mutableStateOf<String?>(null) }
+    var startupMinimumElapsed by remember { mutableStateOf(false) }
+    var startupSlowMessageVisible by remember { mutableStateOf(false) }
+    var startupFinished by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        delay(700)
+        startupMinimumElapsed = true
+    }
+
+    LaunchedEffect(Unit) {
+        delay(5000)
+        startupSlowMessageVisible = true
+    }
+
+    LaunchedEffect(
+        configLoaded,
+        config.ui.wallpaperPath,
+        startupWallpaperReadyPath,
+        startupMinimumElapsed,
+    ) {
+        if (!startupFinished && isStartupAppearanceReady(
+                configLoaded = configLoaded,
+                configuredWallpaperPath = config.ui.wallpaperPath,
+                readyWallpaperPath = startupWallpaperReadyPath,
+                minimumDurationElapsed = startupMinimumElapsed,
+            )
+        ) {
+            startupFinished = true
+        }
+    }
 
     LaunchedEffect(apiPort, configTick) {
         configLoaded = false
@@ -244,7 +302,11 @@ internal fun GpuMonitorDashboardV2(
     ) {
         Box(Modifier.fillMaxSize().background(V2Background)) {
             Box(Modifier.fillMaxSize().layerBackdrop(navigationBackdrop)) {
-                V2Backdrop(contentBackdrop, config.ui.wallpaperPath)
+                V2Backdrop(
+                    backdrop = contentBackdrop,
+                    wallpaperPath = config.ui.wallpaperPath,
+                    onWallpaperReady = { path -> startupWallpaperReadyPath = path },
+                )
                 when (selectedTab) {
                     V2Tab.Home -> V2HomePage(
                         backdrop = contentBackdrop,
@@ -431,6 +493,20 @@ internal fun GpuMonitorDashboardV2(
                 }
             }
 
+            AnimatedVisibility(
+                visible = !startupFinished,
+                modifier = Modifier.fillMaxSize(),
+                enter = EnterTransition.None,
+                exit = fadeOut(
+                    animationSpec = tween(
+                        durationMillis = 480,
+                        easing = FastOutSlowInEasing,
+                    ),
+                ),
+            ) {
+                V2StartupScreen(showSlowMessage = startupSlowMessageVisible)
+            }
+
             pendingDeleteServer?.let { name ->
                 V2DeleteServerDialog(
                     backdrop = navigationBackdrop,
@@ -517,6 +593,143 @@ internal fun GpuMonitorDashboardV2(
                     onMinimize = onMinimizeRequest,
                     onExit = onExitRequest,
                     onReturn = onDismissCloseDialog,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun V2StartupScreen(showSlowMessage: Boolean) {
+    val transition = rememberInfiniteTransition(label = "startup-transition")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2600, easing = LinearEasing),
+        ),
+        label = "startup-ring-rotation",
+    )
+    val pulse by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1250, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "startup-ring-pulse",
+    )
+    val glide by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1450, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "startup-progress-glide",
+    )
+
+    Box(
+        modifier = Modifier.fillMaxSize().background(
+            Brush.linearGradient(
+                colors = listOf(
+                    Color(0xFF07101F),
+                    Color(0xFF0A1427),
+                    Color(0xFF111026),
+                ),
+                start = Offset.Zero,
+                end = Offset.Infinite,
+            ),
+        ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawCircle(
+                color = Color(0xFF4F83FF).copy(alpha = 0.11f),
+                radius = size.minDimension * (0.30f + pulse * 0.025f),
+                center = Offset(size.width * 0.34f, size.height * 0.34f),
+            )
+            drawCircle(
+                color = Color(0xFF9169FF).copy(alpha = 0.075f),
+                radius = size.minDimension * (0.24f + (1f - pulse) * 0.02f),
+                center = Offset(size.width * 0.70f, size.height * 0.66f),
+            )
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.size(154.dp), contentAlignment = Alignment.Center) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val ringWidth = 1.6.dp.toPx()
+                    val inset = 12.dp.toPx()
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.055f + pulse * 0.025f),
+                        radius = size.minDimension * 0.5f - inset,
+                        style = Stroke(width = ringWidth),
+                    )
+                    rotate(rotation) {
+                        drawArc(
+                            color = Color(0xFF91B9FF).copy(alpha = 0.72f),
+                            startAngle = -72f,
+                            sweepAngle = 102f,
+                            useCenter = false,
+                            topLeft = Offset(inset, inset),
+                            size = Size(size.width - inset * 2f, size.height - inset * 2f),
+                            style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round),
+                        )
+                    }
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.018f + pulse * 0.018f),
+                        radius = size.minDimension * (0.36f + pulse * 0.018f),
+                    )
+                }
+                Box(
+                    modifier = Modifier.size(94.dp).clip(RoundedCornerShape(29.dp))
+                        .background(Color.White.copy(alpha = 0.055f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource("app-icon.png"),
+                        contentDescription = null,
+                        tint = Color.Unspecified,
+                        modifier = Modifier.size(72.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            Text(
+                "GPU MONITOR",
+                color = Color(0xFFF4F7FF),
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(7.dp))
+            Box(Modifier.height(16.dp), contentAlignment = Alignment.Center) {
+                if (showSlowMessage) {
+                    Text(
+                        "正在载入个性化设置",
+                        color = Color(0xFFB9C7DE),
+                        fontSize = 11.sp,
+                    )
+                }
+            }
+            Spacer(Modifier.height(19.dp))
+            Canvas(Modifier.width(132.dp).height(4.dp)) {
+                val radius = size.height * 0.5f
+                val segmentWidth = size.width * 0.30f
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.07f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius),
+                )
+                drawRoundRect(
+                    brush = Brush.horizontalGradient(
+                        listOf(
+                            Color(0xFF7FAEFF).copy(alpha = 0.34f),
+                            Color(0xFFC9DDFF).copy(alpha = 0.90f),
+                            Color(0xFF7FAEFF).copy(alpha = 0.34f),
+                        ),
+                    ),
+                    topLeft = Offset((size.width - segmentWidth) * glide, 0f),
+                    size = Size(segmentWidth, size.height),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius),
                 )
             }
         }
