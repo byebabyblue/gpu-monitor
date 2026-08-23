@@ -56,7 +56,7 @@ internal object MonitorInstallation {
             add("settings", JsonObject().apply {
                 addProperty("gpu_active_interval", 3)
                 addProperty("gpu_idle_interval", 60)
-                addProperty("disk_interval", 30)
+                addProperty("disk_interval", 21600)
                 addProperty("process_interval", 6)
                 addProperty("idle_threshold", 600)
                 addProperty("api_port", DefaultApiPort)
@@ -67,7 +67,7 @@ internal object MonitorInstallation {
                 addProperty("autostart", false)
                 addProperty("readability_blur", false)
                 addProperty("readability_shade", false)
-                addProperty("text_mode", "light")
+                addProperty("text_mode", "system")
                 addProperty("top_bar_blur", true)
                 addProperty("bottom_bar_blur", true)
                 addProperty("glass_tint", "clear")

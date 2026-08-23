@@ -108,14 +108,35 @@ internal enum class V2Tab(
 }
 
 private val V2FontScaleOptions = listOf(0.90, 1.00, 1.08, 1.16, 1.25, 1.35)
+internal val V2TextModeOptions = listOf(
+    "system" to "系统",
+    "dark" to "浅色",
+    "light" to "深色",
+)
+internal val V2DiskIntervalOptions = listOf(
+    10 to "10s",
+    60 to "60s",
+    60 * 60 to "1h",
+    6 * 60 * 60 to "6h",
+    24 * 60 * 60 to "24h",
+)
+
+internal fun normalizeDiskInterval(seconds: Int): Int {
+    val positiveSeconds = seconds.coerceAtLeast(1)
+    return V2DiskIntervalOptions.minByOrNull { (option, _) ->
+        maxOf(option, positiveSeconds).toDouble() / minOf(option, positiveSeconds)
+    }?.first ?: 6 * 60 * 60
+}
 
 internal fun isStartupAppearanceReady(
     configLoaded: Boolean,
     configuredWallpaperPath: String,
     readyWallpaperPath: String?,
     minimumDurationElapsed: Boolean,
+    systemAppearanceReady: Boolean,
 ): Boolean = configLoaded &&
     minimumDurationElapsed &&
+    systemAppearanceReady &&
     readyWallpaperPath == configuredWallpaperPath
 
 @Composable
@@ -160,6 +181,18 @@ internal fun GpuMonitorDashboardV2(
     var startupMinimumElapsed by remember { mutableStateOf(false) }
     var startupSlowMessageVisible by remember { mutableStateOf(false) }
     var startupFinished by remember { mutableStateOf(false) }
+    var systemAppsUseLightTheme by remember { mutableStateOf(false) }
+    var systemAppearanceLoaded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(config.ui.textMode) {
+        if (config.ui.textMode == "system") {
+            systemAppearanceLoaded = false
+            systemAppsUseLightTheme = withContext(Dispatchers.IO) {
+                SystemAppearance.appsUseLightTheme()
+            }
+        }
+        systemAppearanceLoaded = true
+    }
 
     LaunchedEffect(Unit) {
         delay(700)
@@ -176,12 +209,14 @@ internal fun GpuMonitorDashboardV2(
         config.ui.wallpaperPath,
         startupWallpaperReadyPath,
         startupMinimumElapsed,
+        systemAppearanceLoaded,
     ) {
         if (!startupFinished && isStartupAppearanceReady(
                 configLoaded = configLoaded,
                 configuredWallpaperPath = config.ui.wallpaperPath,
                 readyWallpaperPath = startupWallpaperReadyPath,
                 minimumDurationElapsed = startupMinimumElapsed,
+                systemAppearanceReady = config.ui.textMode != "system" || systemAppearanceLoaded,
             )
         ) {
             startupFinished = true
@@ -290,12 +325,16 @@ internal fun GpuMonitorDashboardV2(
         density = baseDensity.density,
         fontScale = baseDensity.fontScale * config.ui.fontScale.coerceIn(0.90, 1.35).toFloat(),
     )
+    val useDarkText = textModeUsesDarkText(
+        textMode = config.ui.textMode,
+        systemAppsUseLightTheme = systemAppsUseLightTheme,
+    )
 
     CompositionLocalProvider(
         LocalDensity provides scaledDensity,
         LocalV2ReadabilityBlur provides config.ui.readabilityBlur,
         LocalV2ReadabilityShade provides config.ui.readabilityShade,
-        LocalV2DarkText provides (config.ui.textMode == "dark"),
+        LocalV2DarkText provides useDarkText,
         LocalV2TopBarBlur provides config.ui.topBarBlur,
         LocalV2BottomBarBlur provides config.ui.bottomBarBlur,
         LocalV2GlassTint provides config.ui.glassTint,
@@ -1613,7 +1652,7 @@ private fun V2SettingsPage(
     var apiPortText by remember { mutableStateOf(config.polling.apiPort.toString()) }
     var activeSeconds by remember { mutableIntStateOf(config.polling.gpuActiveSeconds) }
     var idleSeconds by remember { mutableIntStateOf(config.polling.gpuIdleSeconds) }
-    var diskSeconds by remember { mutableIntStateOf(config.polling.diskSeconds) }
+    var diskSeconds by remember { mutableIntStateOf(normalizeDiskInterval(config.polling.diskSeconds)) }
     var processSeconds by remember { mutableIntStateOf(config.polling.processSeconds) }
     var idleThreshold by remember { mutableIntStateOf(config.polling.idleThresholdSeconds) }
     var defaultPage by remember { mutableStateOf(config.ui.defaultPage) }
@@ -1634,7 +1673,7 @@ private fun V2SettingsPage(
         apiPortText = config.polling.apiPort.toString()
         activeSeconds = config.polling.gpuActiveSeconds
         idleSeconds = config.polling.gpuIdleSeconds
-        diskSeconds = config.polling.diskSeconds
+        diskSeconds = normalizeDiskInterval(config.polling.diskSeconds)
         processSeconds = config.polling.processSeconds
         idleThreshold = config.polling.idleThresholdSeconds
         defaultPage = config.ui.defaultPage
@@ -1701,15 +1740,14 @@ private fun V2SettingsPage(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text("文字颜色", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("根据壁纸明暗选择整套文字颜色", color = V2Muted, fontSize = 9.sp)
+                        Text("跟随 Windows 或手动选择界面明暗", color = V2Muted, fontSize = 9.sp)
                     }
-                    val textModes = listOf("light", "dark")
                     V2SegmentedSlider(
                         backdrop = backdrop,
-                        labels = listOf("亮色文字", "暗色文字"),
-                        selectedIndex = textModes.indexOf(textMode).coerceAtLeast(0),
+                        labels = V2TextModeOptions.map { it.second },
+                        selectedIndex = V2TextModeOptions.indexOfFirst { it.first == textMode }.coerceAtLeast(0),
                         onSelected = { index ->
-                            textMode = textModes[index]
+                            textMode = V2TextModeOptions[index].first
                             onTextModePreview(textMode)
                         },
                         modifier = Modifier.width(220.dp),
@@ -1879,7 +1917,13 @@ private fun V2SettingsPage(
                 V2Field(apiPortText, { apiPortText = it.filter(Char::isDigit).take(5) }, "前后端通信端口", Modifier.fillMaxWidth())
                 V2IntervalRow(backdrop, "活跃 GPU", activeSeconds, listOf(1, 3, 5, 10)) { activeSeconds = it }
                 V2IntervalRow(backdrop, "空闲 GPU", idleSeconds, listOf(30, 60, 120, 300)) { idleSeconds = it }
-                V2IntervalRow(backdrop, "硬盘", diskSeconds, listOf(10, 30, 60, 120, 300)) { diskSeconds = it }
+                V2IntervalRow(
+                    backdrop = backdrop,
+                    label = "硬盘",
+                    selected = diskSeconds,
+                    options = V2DiskIntervalOptions.map { it.first },
+                    displayLabels = V2DiskIntervalOptions.map { it.second },
+                ) { diskSeconds = it }
                 V2IntervalRow(backdrop, "任务列表", processSeconds, listOf(3, 6, 10, 30, 60)) { processSeconds = it }
                 V2IntervalRow(backdrop, "空闲判定", idleThreshold, listOf(300, 600, 1200, 1800), "s") { idleThreshold = it }
                 Text("修改通信端口后需要重启软件；其余刷新项立即生效。", color = V2Muted, fontSize = 9.sp)
@@ -2089,13 +2133,15 @@ private fun V2IntervalRow(
     selected: Int,
     options: List<Int>,
     suffix: String = "s",
+    displayLabels: List<String>? = null,
     onSelected: (Int) -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = V2Dim, fontSize = 11.sp, modifier = Modifier.width(74.dp))
         V2SegmentedSlider(
             backdrop = backdrop,
-            labels = options.map { value -> "$value$suffix" },
+            labels = displayLabels?.takeIf { it.size == options.size }
+                ?: options.map { value -> "$value$suffix" },
             selectedIndex = options.indexOf(selected).coerceAtLeast(0),
             onSelected = { index -> onSelected(options[index]) },
             modifier = Modifier.weight(1f),

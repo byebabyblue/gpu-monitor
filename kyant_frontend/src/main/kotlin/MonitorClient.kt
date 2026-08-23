@@ -91,7 +91,7 @@ internal data class GpuHistorySeries(
 internal data class PollSettings(
     val gpuActiveSeconds: Int = 3,
     val gpuIdleSeconds: Int = 60,
-    val diskSeconds: Int = 30,
+    val diskSeconds: Int = 21600,
     val processSeconds: Int = 6,
     val idleThresholdSeconds: Int = 600,
     val apiPort: Int = DefaultApiPort,
@@ -103,7 +103,7 @@ internal data class UiSettings(
     val autostart: Boolean = false,
     val readabilityBlur: Boolean = false,
     val readabilityShade: Boolean = false,
-    val textMode: String = "light",
+    val textMode: String = "system",
     val topBarBlur: Boolean = true,
     val bottomBarBlur: Boolean = true,
     val glassTint: String = "clear",
@@ -368,7 +368,7 @@ internal object MonitorClient {
             polling = PollSettings(
                 gpuActiveSeconds = settings.intValue("gpu_active_interval", 3),
                 gpuIdleSeconds = settings.intValue("gpu_idle_interval", 60),
-                diskSeconds = settings.intValue("disk_interval", 30),
+                diskSeconds = settings.intValue("disk_interval", 21600),
                 processSeconds = settings.intValue("process_interval", 6),
                 idleThresholdSeconds = settings.intValue("idle_threshold", 600),
                 apiPort = settings.intValue("api_port", DefaultApiPort),
@@ -383,7 +383,7 @@ internal object MonitorClient {
                 } else {
                     ui.booleanValue("readability_blur")
                 },
-                textMode = ui.stringValue("text_mode", "light"),
+                textMode = ui.stringValue("text_mode", "system"),
                 topBarBlur = ui.booleanValue("top_bar_blur", true),
                 bottomBarBlur = ui.booleanValue("bottom_bar_blur", true),
                 glassTint = ui.stringValue("glass_tint", "clear"),

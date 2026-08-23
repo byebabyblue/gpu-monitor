@@ -106,7 +106,7 @@ class C:
 class RefreshSettings:
     gpu_active_interval = 3
     gpu_idle_interval = 60
-    disk_interval = 30
+    disk_interval = 21600
     process_interval = 6
     idle_threshold = 600  # 10 min before slow polling
     _config_path = None
@@ -130,7 +130,7 @@ class RefreshSettings:
             s.get("gpu_idle_interval", 60), 60, 5, 3600
         )
         cls.disk_interval = cls._bounded_number(
-            s.get("disk_interval", 30), 30, 5, 21600
+            s.get("disk_interval", 21600), 21600, 5, 86400
         )
         cls.process_interval = cls._bounded_number(
             s.get("process_interval", 6), 6, 2, 300
@@ -248,7 +248,7 @@ def _friendly_ssh_error(error, phase="connect"):
     """Translate common connection failures without hiding useful details."""
     if _is_timeout_error(error):
         if phase == "connect":
-            return "连接超时，无法获取服务器指纹"
+            return "连接超时"
         return "连接超时，服务器未响应"
 
     message = str(error).strip()
@@ -2665,7 +2665,7 @@ class Dashboard(QMainWindow):
             lambda v: setattr(RefreshSettings, 'gpu_active_interval', v) or RefreshSettings._auto_save()
         )
         _make_combo(
-            "Disk Poll:", [("10s",10), ("30s",30), ("1m",60), ("2m",120), ("5h",18000)],
+            "Disk Poll:", [("10s",10), ("60s",60), ("1h",3600), ("6h",21600), ("24h",86400)],
             RefreshSettings.disk_interval,
             lambda v: setattr(RefreshSettings, 'disk_interval', v) or RefreshSettings._auto_save()
         )
@@ -3495,7 +3495,7 @@ class Dashboard(QMainWindow):
                 "autostart": bool(ui.get("autostart", False)),
                 "readability_blur": bool(ui.get("readability_blur", False)),
                 "readability_shade": bool(ui.get("readability_shade", ui.get("readability_blur", False))),
-                "text_mode": str(ui.get("text_mode", "light") or "light"),
+                "text_mode": str(ui.get("text_mode", "system") or "system"),
                 "top_bar_blur": bool(ui.get("top_bar_blur", True)),
                 "bottom_bar_blur": bool(ui.get("bottom_bar_blur", True)),
                 "glass_tint": glass_tint,
@@ -3563,7 +3563,7 @@ class Dashboard(QMainWindow):
         numeric_fields = {
             "gpu_active_interval": (3, 1, 300),
             "gpu_idle_interval": (60, 5, 3600),
-            "disk_interval": (30, 5, 21600),
+            "disk_interval": (21600, 5, 86400),
             "process_interval": (6, 2, 300),
             "idle_threshold": (600, 30, 86400),
         }
@@ -3614,8 +3614,8 @@ class Dashboard(QMainWindow):
         if "readability_shade" in ui_payload:
             ui["readability_shade"] = bool(ui_payload["readability_shade"])
         if "text_mode" in ui_payload:
-            text_mode = str(ui_payload.get("text_mode", "light")).lower()
-            if text_mode not in {"light", "dark"}:
+            text_mode = str(ui_payload.get("text_mode", "system")).lower()
+            if text_mode not in {"system", "light", "dark"}:
                 raise ValueError("Unknown text color mode")
             ui["text_mode"] = text_mode
         if "top_bar_blur" in ui_payload:

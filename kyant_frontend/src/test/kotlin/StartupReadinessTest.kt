@@ -11,6 +11,7 @@ class StartupReadinessTest {
                 configuredWallpaperPath = "wallpaper.png",
                 readyWallpaperPath = "wallpaper.png",
                 minimumDurationElapsed = true,
+                systemAppearanceReady = true,
             ),
         )
         assertFalse(
@@ -19,6 +20,7 @@ class StartupReadinessTest {
                 configuredWallpaperPath = "wallpaper.png",
                 readyWallpaperPath = "old-wallpaper.png",
                 minimumDurationElapsed = true,
+                systemAppearanceReady = true,
             ),
         )
         assertFalse(
@@ -27,6 +29,16 @@ class StartupReadinessTest {
                 configuredWallpaperPath = "wallpaper.png",
                 readyWallpaperPath = "wallpaper.png",
                 minimumDurationElapsed = false,
+                systemAppearanceReady = true,
+            ),
+        )
+        assertFalse(
+            isStartupAppearanceReady(
+                configLoaded = true,
+                configuredWallpaperPath = "wallpaper.png",
+                readyWallpaperPath = "wallpaper.png",
+                minimumDurationElapsed = true,
+                systemAppearanceReady = false,
             ),
         )
     }
@@ -39,6 +51,7 @@ class StartupReadinessTest {
                 configuredWallpaperPath = "wallpaper.png",
                 readyWallpaperPath = "wallpaper.png",
                 minimumDurationElapsed = true,
+                systemAppearanceReady = true,
             ),
         )
         assertTrue(
@@ -47,6 +60,7 @@ class StartupReadinessTest {
                 configuredWallpaperPath = "",
                 readyWallpaperPath = "",
                 minimumDurationElapsed = true,
+                systemAppearanceReady = true,
             ),
         )
     }
