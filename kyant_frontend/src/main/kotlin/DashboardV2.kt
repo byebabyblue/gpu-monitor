@@ -504,7 +504,9 @@ internal fun GpuMonitorDashboardV2(
                     ),
                 ),
             ) {
-                V2StartupScreen(showSlowMessage = startupSlowMessageVisible)
+                CompositionLocalProvider(LocalDensity provides baseDensity) {
+                    V2StartupScreen(showSlowMessage = startupSlowMessageVisible)
+                }
             }
 
             pendingDeleteServer?.let { name ->
@@ -700,7 +702,7 @@ private fun V2StartupScreen(showSlowMessage: Boolean) {
                 }
             }
             Spacer(Modifier.height(19.dp))
-            Canvas(Modifier.width(132.dp).height(4.dp)) {
+            Canvas(Modifier.width(156.dp).height(5.dp)) {
                 val radius = size.height * 0.5f
                 val segmentWidth = size.width * 0.30f
                 drawRoundRect(
