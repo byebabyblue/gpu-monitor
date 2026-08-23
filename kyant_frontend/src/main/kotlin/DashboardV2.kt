@@ -109,6 +109,7 @@ internal enum class V2Tab(
 
 private val V2FontScaleOptions = listOf(0.90, 1.00, 1.08, 1.16, 1.25, 1.35)
 private val V2BlurLevelLabels = listOf("关闭", "轻度", "中度", "重度")
+internal val V2TrayLightweightDelayOptions = listOf(1, 5, 10, 30, 60)
 internal val V2TextModeOptions = listOf(
     "system" to "系统",
     "dark" to "浅色",
@@ -129,6 +130,15 @@ internal fun normalizeDiskInterval(seconds: Int): Int {
     }?.first ?: 6 * 60 * 60
 }
 
+internal fun normalizeTrayLightweightDelayOption(minutes: Int): Int =
+    V2TrayLightweightDelayOptions.minByOrNull { kotlin.math.abs(it - minutes) }
+        ?: DefaultTrayLightweightDelayMinutes
+
+internal fun dashboardDensity(baseDensity: Density, userFontScale: Double): Density = Density(
+    density = baseDensity.density,
+    fontScale = baseDensity.fontScale * userFontScale.coerceIn(0.90, 1.35).toFloat(),
+)
+
 internal fun isStartupAppearanceReady(
     configLoaded: Boolean,
     configuredWallpaperPath: String,
@@ -144,6 +154,7 @@ internal fun isStartupAppearanceReady(
 internal fun GpuMonitorDashboardV2(
     showCloseDialog: Boolean,
     onDismissCloseDialog: () -> Unit,
+    onTrayLightweightPolicyChanged: (Boolean, Int) -> Unit,
     onMinimizeRequest: () -> Unit,
     onExitRequest: () -> Unit,
 ) {
@@ -184,6 +195,17 @@ internal fun GpuMonitorDashboardV2(
     var startupFinished by remember { mutableStateOf(false) }
     var systemAppsUseLightTheme by remember { mutableStateOf(false) }
     var systemAppearanceLoaded by remember { mutableStateOf(false) }
+    var pendingHistoryRangeSave by remember { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(
+        config.ui.trayLightweightEnabled,
+        config.ui.trayLightweightDelayMinutes,
+    ) {
+        onTrayLightweightPolicyChanged(
+            config.ui.trayLightweightEnabled,
+            config.ui.trayLightweightDelayMinutes,
+        )
+    }
 
     LaunchedEffect(config.ui.textMode) {
         if (config.ui.textMode == "system") {
@@ -193,6 +215,18 @@ internal fun GpuMonitorDashboardV2(
             }
         }
         systemAppearanceLoaded = true
+    }
+
+    LaunchedEffect(apiPort, pendingHistoryRangeSave) {
+        val rangeMinutes = pendingHistoryRangeSave ?: return@LaunchedEffect
+        delay(120)
+        withContext(Dispatchers.IO) {
+            MonitorClient.saveGpuHistoryRange(apiPort, rangeMinutes)
+        }.onSuccess {
+            if (pendingHistoryRangeSave == rangeMinutes) pendingHistoryRangeSave = null
+        }.onFailure { error ->
+            settingsMessage = "历史范围暂未保存：${error.message ?: "后端未响应"}"
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -322,10 +356,7 @@ internal fun GpuMonitorDashboardV2(
     }
     val hostKeyPrompt = hostKeyPrompts.firstOrNull()
     val baseDensity = LocalDensity.current
-    val scaledDensity = Density(
-        density = baseDensity.density,
-        fontScale = baseDensity.fontScale * config.ui.fontScale.coerceIn(0.90, 1.35).toFloat(),
-    )
+    val scaledDensity = dashboardDensity(baseDensity, config.ui.fontScale)
     val useDarkText = textModeUsesDarkText(
         textMode = config.ui.textMode,
         systemAppsUseLightTheme = systemAppsUseLightTheme,
@@ -372,7 +403,17 @@ internal fun GpuMonitorDashboardV2(
                         servers = visibleServers,
                         selectedIndex = selectedIndex,
                         history = history,
+                        rangeMinutes = config.ui.gpuHistoryRangeMinutes,
                         onSelected = { index -> selectedServerName = visibleServers.getOrNull(index)?.name },
+                        onRangeSelected = { requestedMinutes ->
+                            val normalizedMinutes = normalizeGpuHistoryRangeMinutes(requestedMinutes)
+                            if (normalizedMinutes != config.ui.gpuHistoryRangeMinutes) {
+                                config = config.copy(
+                                    ui = config.ui.copy(gpuHistoryRangeMinutes = normalizedMinutes),
+                                )
+                                pendingHistoryRangeSave = normalizedMinutes
+                            }
+                        },
                         modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp),
                     )
 
@@ -434,6 +475,14 @@ internal fun GpuMonitorDashboardV2(
                         onBottomBarBlurLevelPreview = { level ->
                             config = config.copy(ui = config.ui.copy(bottomBarBlurLevel = level))
                         },
+                        onTrayLightweightPreview = { enabled, delayMinutes ->
+                            config = config.copy(
+                                ui = config.ui.copy(
+                                    trayLightweightEnabled = enabled,
+                                    trayLightweightDelayMinutes = delayMinutes,
+                                )
+                            )
+                        },
                         onGlassTintPreview = { tint ->
                             config = config.copy(ui = config.ui.copy(glassTint = tint))
                         },
@@ -469,7 +518,7 @@ internal fun GpuMonitorDashboardV2(
                                             config = result.config
                                             configGeneration++
                                             settingsMessage = if (result.restartRequired) {
-                                                "已保存。通信端口将在重启 GPU Monitor 后生效"
+                                                "已保存。通信端口将在重启 Xerver 后生效"
                                             } else {
                                                 "设置已保存并生效"
                                             }
@@ -723,7 +772,7 @@ private fun V2StartupScreen(showSlowMessage: Boolean) {
             }
             Spacer(Modifier.height(18.dp))
             Text(
-                "GPU MONITOR",
+                "XERVER",
                 color = Color(0xFFF4F7FF),
                 fontSize = 19.sp,
                 fontWeight = FontWeight.Bold,
@@ -969,11 +1018,12 @@ private fun V2GpuPage(
     servers: List<MonitorServer>,
     selectedIndex: Int,
     history: List<GpuHistorySeries>,
+    rangeMinutes: Int,
     onSelected: (Int) -> Unit,
+    onRangeSelected: (Int) -> Unit,
     modifier: Modifier,
 ) {
     val selected = servers.getOrNull(selectedIndex)
-    var rangeMinutes by remember { mutableIntStateOf(24 * 60) }
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         V2ServerSidebar(
             backdrop,
@@ -995,7 +1045,7 @@ private fun V2GpuPage(
                         Column {
                             Text(selected.name, color = V2Text, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                             Text(
-                                if (selected.connected) "${selected.gpus.size} GPU · 最后更新 ${selected.lastUpdate.ifBlank { "刚刚" }}" else selected.error.ifBlank { "连接中断" },
+                                if (selected.connected) "${selected.gpus.size} GPU · 最后更新 ${formatLastUpdate(selected.lastUpdate)}" else selected.error.ifBlank { "连接中断" },
                                 color = V2Dim,
                                 fontSize = 10.sp,
                                 maxLines = 1,
@@ -1012,17 +1062,11 @@ private fun V2GpuPage(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("HISTORY RANGE", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.width(12.dp))
-                    val rangeOptions = listOf(
-                        15 to "15min",
-                        60 to "1h",
-                        6 * 60 to "6h",
-                        24 * 60 to "24h",
-                    )
                     V2SegmentedSlider(
                         backdrop = backdrop,
-                        labels = rangeOptions.map { it.second },
-                        selectedIndex = rangeOptions.indexOfFirst { it.first == rangeMinutes }.coerceAtLeast(0),
-                        onSelected = { index -> rangeMinutes = rangeOptions[index].first },
+                        labels = GpuHistoryRangeOptions.map(::gpuHistoryRangeLabel),
+                        selectedIndex = GpuHistoryRangeOptions.indexOf(rangeMinutes).coerceAtLeast(0),
+                        onSelected = { index -> onRangeSelected(GpuHistoryRangeOptions[index]) },
                         modifier = Modifier.width(220.dp),
                         height = 36.dp,
                     )
@@ -1121,7 +1165,7 @@ private fun V2NodePage(
                         Column {
                             Text(selected.name, color = V2Text, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                             Text(
-                                if (selected.connected) "当前节点 · ${selected.lastUpdate.ifBlank { "刚刚" }}" else selected.error.ifBlank { "连接中断" },
+                                if (selected.connected) "当前节点 · ${formatLastUpdate(selected.lastUpdate)}" else selected.error.ifBlank { "连接中断" },
                                 color = V2Dim,
                                 fontSize = 10.sp,
                                 maxLines = 1,
@@ -1507,17 +1551,17 @@ private fun V2CloseApplicationDialog(
     onReturn: () -> Unit,
 ) {
     V2GlassDialogFrame(backdrop, onReturn) {
-        Text("CLOSE GPU MONITOR", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("CLOSE XERVER", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         Text("关闭软件？", color = V2Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(
-            "监控后端会在直接关闭时一并停止。也可以只把窗口最小化到任务栏，继续保留当前监控。",
+            "直接关闭会停止监控后端。选择最小化到系统托盘后，程序会继续在后台运行；点击右下角托盘图标即可恢复窗口。",
             color = V2Dim,
             fontSize = 11.sp,
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             V2GlassDialogButton(
                 backdrop = backdrop,
-                label = "最小化到任务栏",
+                label = "最小化到系统托盘",
                 color = V2Accent,
                 modifier = Modifier.weight(1f),
                 onClick = {
@@ -1635,6 +1679,7 @@ private fun V2SettingsPage(
     onTextModePreview: (String) -> Unit,
     onTopBarBlurLevelPreview: (Int) -> Unit,
     onBottomBarBlurLevelPreview: (Int) -> Unit,
+    onTrayLightweightPreview: (Boolean, Int) -> Unit,
     onGlassTintPreview: (String) -> Unit,
     onFontScalePreview: (Double) -> Unit,
     onHiddenServersPreview: (List<String>) -> Unit,
@@ -1663,6 +1708,10 @@ private fun V2SettingsPage(
     var fontScale by remember { mutableStateOf(config.ui.fontScale) }
     var hiddenServers by remember { mutableStateOf(config.ui.hiddenServers.toSet()) }
     var rememberWindowBounds by remember { mutableStateOf(config.ui.rememberWindowBounds) }
+    var trayLightweightEnabled by remember { mutableStateOf(config.ui.trayLightweightEnabled) }
+    var trayLightweightDelayMinutes by remember {
+        mutableIntStateOf(normalizeTrayLightweightDelayOption(config.ui.trayLightweightDelayMinutes))
+    }
     var draft by remember { mutableStateOf(ServerDraft()) }
 
     LaunchedEffect(configGeneration) {
@@ -1683,6 +1732,10 @@ private fun V2SettingsPage(
         fontScale = config.ui.fontScale
         hiddenServers = config.ui.hiddenServers.toSet()
         rememberWindowBounds = config.ui.rememberWindowBounds
+        trayLightweightEnabled = config.ui.trayLightweightEnabled
+        trayLightweightDelayMinutes = normalizeTrayLightweightDelayOption(
+            config.ui.trayLightweightDelayMinutes
+        )
     }
 
     fun setServerHidden(name: String, hidden: Boolean) {
@@ -1805,7 +1858,7 @@ private fun V2SettingsPage(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "玻璃卡片",
+                        "玻璃卡片模糊",
                         color = V2Text,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -1887,7 +1940,7 @@ private fun V2SettingsPage(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text("开机自启动", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("登录 Windows 后自动启动 GPU Monitor", color = V2Muted, fontSize = 9.sp)
+                        Text("登录 Windows 后自动启动 Xerver", color = V2Muted, fontSize = 9.sp)
                     }
                     Switch(
                         checked = autostart,
@@ -1910,6 +1963,57 @@ private fun V2SettingsPage(
                         onCheckedChange = { rememberWindowBounds = it },
                         colors = SwitchDefaults.colors(checkedThumbColor = V2AccentStrong, checkedTrackColor = V2AccentStrong.copy(alpha = 0.45f)),
                     )
+                }
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.035f))
+                        .clickable {
+                            trayLightweightEnabled = !trayLightweightEnabled
+                            onTrayLightweightPreview(trayLightweightEnabled, trayLightweightDelayMinutes)
+                        }.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("托盘轻量化", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("进入系统托盘后仅保留后台监控", color = V2Muted, fontSize = 9.sp)
+                    }
+                    Switch(
+                        checked = trayLightweightEnabled,
+                        onCheckedChange = { enabled ->
+                            trayLightweightEnabled = enabled
+                            onTrayLightweightPreview(enabled, trayLightweightDelayMinutes)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = V2AccentStrong, checkedTrackColor = V2AccentStrong.copy(alpha = 0.45f)),
+                    )
+                }
+                if (trayLightweightEnabled) {
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.035f))
+                            .padding(horizontal = 14.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "进入时间",
+                            color = V2Text,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.width(128.dp),
+                        )
+                        V2SegmentedSlider(
+                            backdrop = backdrop,
+                            labels = V2TrayLightweightDelayOptions.map { "${it}min" },
+                            selectedIndex = V2TrayLightweightDelayOptions.indexOf(trayLightweightDelayMinutes)
+                                .coerceAtLeast(0),
+                            onSelected = { index ->
+                                trayLightweightDelayMinutes = V2TrayLightweightDelayOptions[index]
+                                onTrayLightweightPreview(
+                                    trayLightweightEnabled,
+                                    trayLightweightDelayMinutes,
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                            height = 34.dp,
+                        )
+                    }
                 }
             }
 
@@ -2074,7 +2178,7 @@ private fun V2SettingsPage(
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("保存设置", color = V2Text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Text(saveMessage.ifBlank { "设置保存在 %APPDATA%\\GPU Monitor\\config.json" }, color = V2Dim, fontSize = 10.sp)
+                    Text(saveMessage.ifBlank { "设置保存在 %APPDATA%\\Xerver\\config.json" }, color = V2Dim, fontSize = 10.sp)
                 }
                 V2ActionButton("保存并应用", Icons.Rounded.Save, saveBusy) {
                     val port = apiPortText.toIntOrNull()?.coerceIn(1024, 65535) ?: DefaultApiPort
@@ -2092,6 +2196,8 @@ private fun V2SettingsPage(
                             fontScale = fontScale,
                             hiddenServers = hiddenServers.sorted(),
                             rememberWindowBounds = rememberWindowBounds,
+                            trayLightweightEnabled = trayLightweightEnabled,
+                            trayLightweightDelayMinutes = trayLightweightDelayMinutes,
                             windowBounds = config.ui.windowBounds,
                         ),
                     )
@@ -2220,7 +2326,7 @@ private fun copyTaskToClipboard(task: MonitorTask): Boolean = runCatching {
 }.getOrDefault(false)
 
 private fun chooseWallpaper(): String? {
-    val dialog = FileDialog(null as Frame?, "选择 GPU Monitor 壁纸", FileDialog.LOAD)
+    val dialog = FileDialog(null as Frame?, "选择 Xerver 壁纸", FileDialog.LOAD)
     dialog.filenameFilter = java.io.FilenameFilter { _, name ->
         name.lowercase().endsWith(".png") || name.lowercase().endsWith(".jpg") || name.lowercase().endsWith(".jpeg") || name.lowercase().endsWith(".webp")
     }

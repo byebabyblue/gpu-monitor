@@ -22,7 +22,8 @@ internal data class ManagedWallpaper(
 )
 
 internal object WallpaperManager {
-    private const val AppDirectoryName = "GPU Monitor"
+    private const val AppDirectoryName = "Xerver"
+    private const val LegacyAppDirectoryName = "GPU Monitor"
 
     fun normalizeConfiguredPath(path: String): Result<String> {
         if (path.isBlank()) return Result.success("")
@@ -35,6 +36,9 @@ internal object WallpaperManager {
         val displayDirectory = displayDirectory().apply { mkdirs() }
         val configured = File(path).absoluteFile
         val displayRoot = displayDirectory.toPath().toAbsolutePath().normalize()
+        val legacyRoot = legacyWallpaperRoot()
+        val legacyDisplayRoot = legacyRoot?.resolve("display")?.toPath()?.toAbsolutePath()?.normalize()
+        val legacyOriginalRoot = legacyRoot?.resolve("original")
         val configuredPath = configured.toPath().toAbsolutePath().normalize()
         val expectedSuffix = "-${target.width}x${target.height}.png"
 
@@ -51,11 +55,16 @@ internal object WallpaperManager {
             )
         }
 
-        val source = if (configuredPath.startsWith(displayRoot)) {
-            val hash = configured.name.substringBefore('-')
-            findOriginal(originalDirectory, hash) ?: configured
-        } else {
-            configured
+        val source = when {
+            configuredPath.startsWith(displayRoot) -> {
+                val hash = configured.name.substringBefore('-')
+                findOriginal(originalDirectory, hash) ?: configured
+            }
+            legacyDisplayRoot != null && legacyOriginalRoot != null && configuredPath.startsWith(legacyDisplayRoot) -> {
+                val hash = configured.name.substringBefore('-')
+                findOriginal(legacyOriginalRoot, hash) ?: configured
+            }
+            else -> configured
         }
         require(source.isFile) { "找不到壁纸文件：${source.absolutePath}" }
 
@@ -169,12 +178,21 @@ internal object WallpaperManager {
             ?.takeIf { it.isNotBlank() }
             ?.let(::File)
             ?.let { return it }
-        val local = System.getenv("LOCALAPPDATA")
+        return File(File(localAppDataRoot(), AppDirectoryName), "wallpapers")
+    }
+
+    private fun legacyWallpaperRoot(): File? {
+        System.getProperty("gpu.monitor.legacy.wallpaper.root")
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::File)
+            ?.let { return it }
+        return File(File(localAppDataRoot(), LegacyAppDirectoryName), "wallpapers")
+    }
+
+    private fun localAppDataRoot(): File = System.getenv("LOCALAPPDATA")
             ?.takeIf { it.isNotBlank() }
             ?.let(::File)
             ?: File(System.getProperty("user.home"), "AppData/Local")
-        return File(File(local, AppDirectoryName), "wallpapers")
-    }
 
     private fun originalDirectory(): File = File(wallpaperRoot(), "original")
 

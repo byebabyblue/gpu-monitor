@@ -17,7 +17,10 @@
     "text_mode": "system",
     "bottom_bar_blur_level": 2,
     "hidden_servers": [],
-    "remember_window_bounds": false
+    "remember_window_bounds": false,
+    "tray_lightweight_enabled": false,
+    "tray_lightweight_delay_minutes": 5,
+    "gpu_history_range_minutes": 1440
   },
   "servers": [
     {

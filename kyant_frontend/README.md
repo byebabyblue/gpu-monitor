@@ -1,6 +1,6 @@
-# GPU Monitor · Kyant Glass
+# Xerver
 
-This folder contains the Compose Desktop frontend for GPU Monitor. The original
+This folder contains the Compose Desktop frontend for Xerver. The original
 `gpu_dashboard.py` remains untouched; the Kyant version uses the copied
 `gpu_dashboard_kyant.py` backend through the local API.
 
@@ -14,16 +14,20 @@ pwsh -NoProfile -Command "$env:JAVA_HOME='C:\\Path\\To\\JDK-21'; .\gradlew.bat p
 
 The generated EXE installer includes the frontend runtime and the bundled
 backend. An installed copy stores its machine-specific configuration under
-`%APPDATA%\GPU Monitor\config.json`.
+`%APPDATA%\Xerver\config.json`. On first launch, Xerver copies an existing
+`%APPDATA%\GPU Monitor` configuration and SSH host-key store so upgrades retain
+the user's servers and preferences.
 
 The application and installer use `src/main/resources/app-icon.png` and
-`app-icon.ico`. Version `0.2.7` can check the latest published release from
+`app-icon.ico`. Version `1.0.0` can check the latest published release from
 `https://github.com/byebabyblue/gpu-monitor/releases` in Settings. The check
 only reads public GitHub release metadata; it does not upload local settings.
 
-Selected wallpapers are copied to `%LOCALAPPDATA%\GPU Monitor\wallpapers`.
+Selected wallpapers are copied to `%LOCALAPPDATA%\Xerver\wallpapers`.
 The untouched source is kept under `original`, while the UI loads a downscaled
-PNG from `display` sized for the largest connected monitor.
+PNG from `display` sized for the largest connected monitor. Existing wallpaper
+assets under `%LOCALAPPDATA%\GPU Monitor\wallpapers` are imported locally when
+needed and are never bundled into releases.
 
 ## Run from source
 

@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "local.gpu.monitor"
-version = "0.2.7"
+version = "1.0.0"
 
 kotlin {
     jvmToolchain(21)
@@ -37,13 +37,14 @@ compose.desktop {
         mainClass = "MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
-            packageName = "gpu-monitor-kyant"
-            packageVersion = "0.2.7"
+            packageName = "Xerver"
+            packageVersion = "1.0.0"
             appResourcesRootDir.set(project.layout.projectDirectory.dir("appResources"))
             windows {
                 shortcut = true
-                menuGroup = "GPU Monitor"
+                menuGroup = "Xerver"
                 perUserInstall = true
+                upgradeUuid = "BCDAABCC-6CD7-3BB2-8B4A-16FFFDA2D8EC"
                 iconFile.set(project.file("src/main/resources/app-icon.ico"))
             }
         }

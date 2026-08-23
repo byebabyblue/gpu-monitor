@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════════╗
-║                    SSH GPU Monitor Dashboard                        ║
+║                         Xerver Dashboard                            ║
 ║          Real-time multi-server GPU / CPU / RAM / Disk monitor      ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -66,6 +66,8 @@ from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData
 from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QDrag
 import http.server
 import threading
+
+GPU_HISTORY_RANGE_OPTIONS = (15, 60, 360, 1440)
 
 # pyqtgraph is optional – dashboard still works without the history chart
 try:
@@ -342,7 +344,7 @@ class SSHConnection:
 
         self.disconnect()
         client = paramiko.SSHClient()
-        # GPU Monitor owns its trust store.  Do not inherit host keys accepted
+        # Xerver owns its trust store.  Do not inherit host keys accepted
         # by OpenSSH, Xshell, or other applications, otherwise this app's
         # first-use fingerprint confirmation can be skipped unexpectedly.
         if self.known_hosts_path and self.known_hosts_path.is_file():
@@ -1788,7 +1790,7 @@ class Dashboard(QMainWindow):
         self._api_server = None
         self._api_thread = None
         self.setWindowTitle(
-            "SSH GPU Monitor — DEMO MODE" if demo else "SSH GPU Monitor"
+            "Xerver — DEMO MODE" if demo else "Xerver"
         )
 
         screen = QApplication.primaryScreen()
@@ -2029,7 +2031,7 @@ class Dashboard(QMainWindow):
 
         ico = QLabel("⚡")
         ico.setStyleSheet(f"font-size:24px; color:{C.ACCENT};")
-        ttl = QLabel("SSH GPU Monitor")
+        ttl = QLabel("Xerver")
         ttl.setStyleSheet(
             f"color:{C.TEXT}; font-size:19px; font-weight:700;"
         )
@@ -3459,6 +3461,23 @@ class Dashboard(QMainWindow):
         bottom_bar_blur_level = self._coerce_blur_level(
             ui.get("bottom_bar_blur_level"), 2 if bool(ui.get("bottom_bar_blur", True)) else 0
         )
+        try:
+            tray_lightweight_delay_minutes = int(
+                ui.get("tray_lightweight_delay_minutes", 5)
+            )
+        except (TypeError, ValueError):
+            tray_lightweight_delay_minutes = 5
+        tray_lightweight_delay_minutes = max(1, min(1440, tray_lightweight_delay_minutes))
+        try:
+            gpu_history_range_minutes = int(
+                ui.get("gpu_history_range_minutes", 1440)
+            )
+        except (TypeError, ValueError):
+            gpu_history_range_minutes = 1440
+        gpu_history_range_minutes = min(
+            GPU_HISTORY_RANGE_OPTIONS,
+            key=lambda option: abs(option - gpu_history_range_minutes),
+        )
         hidden_servers_value = ui.get("hidden_servers", [])
         if not isinstance(hidden_servers_value, list):
             hidden_servers_value = []
@@ -3513,6 +3532,9 @@ class Dashboard(QMainWindow):
                 "font_scale": font_scale,
                 "hidden_servers": hidden_servers,
                 "remember_window_bounds": bool(ui.get("remember_window_bounds", False)),
+                "tray_lightweight_enabled": bool(ui.get("tray_lightweight_enabled", False)),
+                "tray_lightweight_delay_minutes": tray_lightweight_delay_minutes,
+                "gpu_history_range_minutes": gpu_history_range_minutes,
                 "window_bounds": window_bounds,
             },
             "servers": servers,
@@ -3672,6 +3694,24 @@ class Dashboard(QMainWindow):
             ))
         if "remember_window_bounds" in ui_payload:
             ui["remember_window_bounds"] = bool(ui_payload["remember_window_bounds"])
+        if "tray_lightweight_enabled" in ui_payload:
+            ui["tray_lightweight_enabled"] = bool(ui_payload["tray_lightweight_enabled"])
+        if "tray_lightweight_delay_minutes" in ui_payload:
+            try:
+                tray_lightweight_delay_minutes = int(ui_payload["tray_lightweight_delay_minutes"])
+            except (TypeError, ValueError):
+                raise ValueError("Tray lightweight delay must be a number")
+            if not 1 <= tray_lightweight_delay_minutes <= 1440:
+                raise ValueError("Tray lightweight delay must be between 1 and 1440 minutes")
+            ui["tray_lightweight_delay_minutes"] = tray_lightweight_delay_minutes
+        if "gpu_history_range_minutes" in ui_payload:
+            try:
+                gpu_history_range_minutes = int(ui_payload["gpu_history_range_minutes"])
+            except (TypeError, ValueError):
+                raise ValueError("GPU history range must be a number")
+            if gpu_history_range_minutes not in GPU_HISTORY_RANGE_OPTIONS:
+                raise ValueError("GPU history range must be 15, 60, 360, or 1440 minutes")
+            ui["gpu_history_range_minutes"] = gpu_history_range_minutes
         if "window_bounds" in ui_payload:
             window_bounds = ui_payload["window_bounds"]
             if window_bounds is None:
@@ -3717,7 +3757,8 @@ class Dashboard(QMainWindow):
             return
         import winreg
 
-        value_name = "GPU Monitor"
+        value_name = "Xerver"
+        legacy_value_name = "GPU Monitor"
         run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
         root = Path(self._cfg_path).resolve().parent
         launcher = root / "start_gpu_monitor.ps1"
@@ -3744,11 +3785,16 @@ class Dashboard(QMainWindow):
                 else:
                     command = f'"{frontend_path}"'
                 winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, command)
-            else:
                 try:
-                    winreg.DeleteValue(key, value_name)
+                    winreg.DeleteValue(key, legacy_value_name)
                 except FileNotFoundError:
                     pass
+            else:
+                for obsolete_name in (value_name, legacy_value_name):
+                    try:
+                        winreg.DeleteValue(key, obsolete_name)
+                    except FileNotFoundError:
+                        pass
 
     def _api_add_server(self, payload):
         name = str(payload.get("name", "")).strip()
@@ -4051,7 +4097,7 @@ class Dashboard(QMainWindow):
             ],
             "running_tasks": [task_to_dict(task) for task in info.running_tasks],
             "queued_tasks": [task_to_dict(task) for task in info.queued_tasks],
-            "last_update": str(info.last_update) if info.last_update else None,
+            "last_update": info.last_update.isoformat(sep=" ", timespec="seconds") if info.last_update else None,
         }
 
     def resizeEvent(self, event):
@@ -4284,7 +4330,7 @@ _GLOBAL_CSS = f"""
 # ═══════════════════════════════════════════════════════════════════════
 
 def main():
-    ap = argparse.ArgumentParser(description="SSH GPU Monitor Dashboard")
+    ap = argparse.ArgumentParser(description="Xerver server monitoring backend")
     ap.add_argument("-c", "--config", default="config.json",
                     help="Path to server config JSON (default: config.json)")
     ap.add_argument("--demo", action="store_true",

@@ -6,6 +6,7 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import kotlin.math.abs
 import kotlin.math.sin
 
 internal const val DefaultApiPort = 8766
@@ -13,6 +14,9 @@ internal const val BlurLevelOff = 0
 internal const val BlurLevelLight = 1
 internal const val BlurLevelMedium = 2
 internal const val BlurLevelHeavy = 3
+internal const val DefaultTrayLightweightDelayMinutes = 5
+internal const val DefaultGpuHistoryRangeMinutes = 24 * 60
+internal val GpuHistoryRangeOptions = listOf(15, 60, 6 * 60, DefaultGpuHistoryRangeMinutes)
 
 internal fun normalizeBlurLevel(level: Int): Int = level.coerceIn(BlurLevelOff, BlurLevelHeavy)
 
@@ -24,6 +28,19 @@ internal fun blurScaleForLevel(level: Int): Float = when (normalizeBlurLevel(lev
     BlurLevelMedium -> 1.0f
     BlurLevelHeavy -> 1.45f
     else -> 0f
+}
+
+internal fun normalizeTrayLightweightDelayMinutes(minutes: Int): Int = minutes.coerceIn(1, 1440)
+
+internal fun normalizeGpuHistoryRangeMinutes(minutes: Int): Int =
+    GpuHistoryRangeOptions.minByOrNull { option -> abs(option - minutes) }
+        ?: DefaultGpuHistoryRangeMinutes
+
+internal fun formatLastUpdate(value: String): String {
+    val trimmed = value.trim()
+    if (trimmed.isBlank()) return "刚刚"
+    val match = Regex("""^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})""").find(trimmed)
+    return match?.let { "${it.groupValues[1]} ${it.groupValues[2]}" } ?: trimmed
 }
 
 internal data class MonitorGpu(
@@ -125,6 +142,9 @@ internal data class UiSettings(
     val fontScale: Double = 1.08,
     val hiddenServers: List<String> = emptyList(),
     val rememberWindowBounds: Boolean = false,
+    val trayLightweightEnabled: Boolean = false,
+    val trayLightweightDelayMinutes: Int = DefaultTrayLightweightDelayMinutes,
+    val gpuHistoryRangeMinutes: Int = DefaultGpuHistoryRangeMinutes,
     val windowBounds: MonitorWindowBounds? = null,
 )
 
@@ -236,6 +256,15 @@ internal object MonitorClient {
                 ui.hiddenServers.distinct().forEach { name -> add(name) }
             })
             addProperty("remember_window_bounds", ui.rememberWindowBounds)
+            addProperty("tray_lightweight_enabled", ui.trayLightweightEnabled)
+            addProperty(
+                "tray_lightweight_delay_minutes",
+                normalizeTrayLightweightDelayMinutes(ui.trayLightweightDelayMinutes),
+            )
+            addProperty(
+                "gpu_history_range_minutes",
+                normalizeGpuHistoryRangeMinutes(ui.gpuHistoryRangeMinutes),
+            )
             ui.windowBounds?.let { bounds ->
                 add("window_bounds", JsonObject().apply {
                     addProperty("x", bounds.x)
@@ -254,6 +283,18 @@ internal object MonitorClient {
             config = parseConfig(response.objectValue("config")),
             restartRequired = response.booleanValue("restart_required"),
         )
+    }
+
+    fun saveGpuHistoryRange(port: Int, rangeMinutes: Int): Result<Unit> = runCatching {
+        val body = JsonObject().apply {
+            add("ui", JsonObject().apply {
+                addProperty(
+                    "gpu_history_range_minutes",
+                    normalizeGpuHistoryRangeMinutes(rangeMinutes),
+                )
+            })
+        }
+        request(port, "POST", "/api/settings", body)
     }
 
     fun addServer(port: Int, draft: ServerDraft): Result<String> = runCatching {
@@ -410,6 +451,13 @@ internal object MonitorClient {
                     runCatching { element.asString.trim() }.getOrNull()?.takeIf { it.isNotBlank() }
                 }.distinct(),
                 rememberWindowBounds = ui.booleanValue("remember_window_bounds"),
+                trayLightweightEnabled = ui.booleanValue("tray_lightweight_enabled"),
+                trayLightweightDelayMinutes = normalizeTrayLightweightDelayMinutes(
+                    ui.intValue("tray_lightweight_delay_minutes", DefaultTrayLightweightDelayMinutes)
+                ),
+                gpuHistoryRangeMinutes = normalizeGpuHistoryRangeMinutes(
+                    ui.intValue("gpu_history_range_minutes", DefaultGpuHistoryRangeMinutes)
+                ),
                 windowBounds = ui.value("window_bounds")
                     ?.takeIf { it.isJsonObject }
                     ?.asJsonObject

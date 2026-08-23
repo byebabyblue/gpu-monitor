@@ -20,27 +20,43 @@ internal data class MonitorWindowBounds(
 )
 
 internal object MonitorInstallation {
-    private const val AppDirectoryName = "GPU Monitor"
+    private const val AppDirectoryName = "Xerver"
+    private const val LegacyAppDirectoryName = "GPU Monitor"
+    private const val ConfigFileName = "config.json"
 
     fun configFile(): File {
         System.getenv("GPU_MONITOR_CONFIG_PATH")
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?.let { return File(it).absoluteFile }
-        val roaming = System.getenv("APPDATA")
+        return File(File(roamingRoot(), AppDirectoryName), ConfigFileName)
+    }
+
+    private fun roamingRoot(): File = System.getProperty("xerver.appdata.root")
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?.let(::File)
+        ?: System.getenv("APPDATA")
             ?.takeIf { it.isNotBlank() }
             ?.let(::File)
             ?: File(System.getProperty("user.home"), "AppData/Roaming")
-        return File(File(roaming, AppDirectoryName), "config.json")
+
+    private fun legacyConfigFile(): File? {
+        if (!System.getenv("GPU_MONITOR_CONFIG_PATH").isNullOrBlank()) return null
+        return File(File(roamingRoot(), LegacyAppDirectoryName), ConfigFileName)
     }
 
     fun configuredApiPort(): Int? {
-        val config = configFile()
-        if (!config.isFile) return null
-        return runCatching {
-            val root = JsonParser.parseReader(config.reader(StandardCharsets.UTF_8)).asJsonObject
-            root.getAsJsonObject("settings")?.get("api_port")?.asInt
-        }.getOrNull()?.takeIf { it in 1024..65535 }
+        val candidates = listOfNotNull(configFile(), legacyConfigFile()).distinctBy { it.absolutePath }
+        for (config in candidates) {
+            if (!config.isFile) continue
+            val port = runCatching {
+                val root = JsonParser.parseReader(config.reader(StandardCharsets.UTF_8)).asJsonObject
+                root.getAsJsonObject("settings")?.get("api_port")?.asInt
+            }.getOrNull()?.takeIf { it in 1024..65535 }
+            if (port != null) return port
+        }
+        return null
     }
 
     fun ensureConfigFile(): File {
@@ -50,6 +66,12 @@ internal object MonitorInstallation {
         val backup = File(config.parentFile, "config.backup.json")
         if (backup.isFile) {
             Files.copy(backup.toPath(), config.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            return config
+        }
+        val legacyConfig = legacyConfigFile()
+        if (legacyConfig?.isFile == true) {
+            Files.copy(legacyConfig.toPath(), config.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            migrateLegacyCompanionFiles(legacyConfig.parentFile, config.parentFile)
             return config
         }
         val root = JsonObject().apply {
@@ -73,11 +95,24 @@ internal object MonitorInstallation {
                 addProperty("font_scale", 1.08)
                 add("hidden_servers", com.google.gson.JsonArray())
                 addProperty("remember_window_bounds", false)
+                addProperty("tray_lightweight_enabled", false)
+                addProperty("tray_lightweight_delay_minutes", DefaultTrayLightweightDelayMinutes)
+                addProperty("gpu_history_range_minutes", DefaultGpuHistoryRangeMinutes)
             })
             add("servers", com.google.gson.JsonArray())
         }
         Files.writeString(config.toPath(), root.toString(), StandardCharsets.UTF_8)
         return config
+    }
+
+    private fun migrateLegacyCompanionFiles(legacyDirectory: File, targetDirectory: File) {
+        listOf("config.backup.json", "ssh_known_hosts").forEach { name ->
+            val source = File(legacyDirectory, name)
+            val target = File(targetDirectory, name)
+            if (source.isFile && !target.exists()) {
+                Files.copy(source.toPath(), target.toPath())
+            }
+        }
     }
 
     fun launchWindowBounds(): MonitorWindowBounds {
