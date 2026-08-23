@@ -643,18 +643,6 @@ private fun V2StartupScreen(showSlowMessage: Boolean) {
         ),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            drawCircle(
-                color = Color(0xFF4F83FF).copy(alpha = 0.11f),
-                radius = size.minDimension * (0.30f + pulse * 0.025f),
-                center = Offset(size.width * 0.34f, size.height * 0.34f),
-            )
-            drawCircle(
-                color = Color(0xFF9169FF).copy(alpha = 0.075f),
-                radius = size.minDimension * (0.24f + (1f - pulse) * 0.02f),
-                center = Offset(size.width * 0.70f, size.height * 0.66f),
-            )
-        }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.size(154.dp), contentAlignment = Alignment.Center) {
                 Canvas(Modifier.fillMaxSize()) {
