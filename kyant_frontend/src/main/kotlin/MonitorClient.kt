@@ -9,6 +9,22 @@ import java.nio.charset.StandardCharsets
 import kotlin.math.sin
 
 internal const val DefaultApiPort = 8766
+internal const val BlurLevelOff = 0
+internal const val BlurLevelLight = 1
+internal const val BlurLevelMedium = 2
+internal const val BlurLevelHeavy = 3
+
+internal fun normalizeBlurLevel(level: Int): Int = level.coerceIn(BlurLevelOff, BlurLevelHeavy)
+
+internal fun resolveBlurLevel(storedLevel: Int?, legacyEnabled: Boolean): Int =
+    storedLevel?.let(::normalizeBlurLevel) ?: if (legacyEnabled) BlurLevelMedium else BlurLevelOff
+
+internal fun blurScaleForLevel(level: Int): Float = when (normalizeBlurLevel(level)) {
+    BlurLevelLight -> 0.55f
+    BlurLevelMedium -> 1.0f
+    BlurLevelHeavy -> 1.45f
+    else -> 0f
+}
 
 internal data class MonitorGpu(
     val index: Int,
@@ -101,11 +117,10 @@ internal data class UiSettings(
     val wallpaperPath: String = "",
     val defaultPage: String = "home",
     val autostart: Boolean = false,
-    val readabilityBlur: Boolean = false,
-    val readabilityShade: Boolean = false,
+    val cardBlurLevel: Int = BlurLevelOff,
     val textMode: String = "system",
-    val topBarBlur: Boolean = true,
-    val bottomBarBlur: Boolean = true,
+    val topBarBlurLevel: Int = BlurLevelMedium,
+    val bottomBarBlurLevel: Int = BlurLevelMedium,
     val glassTint: String = "clear",
     val fontScale: Double = 1.08,
     val hiddenServers: List<String> = emptyList(),
@@ -211,11 +226,10 @@ internal object MonitorClient {
             addProperty("wallpaper_path", ui.wallpaperPath)
             addProperty("default_page", ui.defaultPage)
             addProperty("autostart", ui.autostart)
-            addProperty("readability_blur", ui.readabilityBlur)
-            addProperty("readability_shade", ui.readabilityShade)
+            addProperty("card_blur_level", normalizeBlurLevel(ui.cardBlurLevel))
             addProperty("text_mode", ui.textMode)
-            addProperty("top_bar_blur", ui.topBarBlur)
-            addProperty("bottom_bar_blur", ui.bottomBarBlur)
+            addProperty("top_bar_blur_level", normalizeBlurLevel(ui.topBarBlurLevel))
+            addProperty("bottom_bar_blur_level", normalizeBlurLevel(ui.bottomBarBlurLevel))
             addProperty("glass_tint", ui.glassTint)
             addProperty("font_scale", ui.fontScale)
             add("hidden_servers", JsonArray().apply {
@@ -377,15 +391,19 @@ internal object MonitorClient {
                 wallpaperPath = ui.stringValue("wallpaper_path"),
                 defaultPage = ui.stringValue("default_page", "home"),
                 autostart = ui.booleanValue("autostart"),
-                readabilityBlur = ui.booleanValue("readability_blur"),
-                readabilityShade = if (ui.value("readability_shade") != null) {
-                    ui.booleanValue("readability_shade")
-                } else {
-                    ui.booleanValue("readability_blur")
-                },
+                cardBlurLevel = resolveBlurLevel(
+                    storedLevel = ui.value("card_blur_level")?.let { ui.intValue("card_blur_level") },
+                    legacyEnabled = ui.booleanValue("readability_blur") || ui.booleanValue("readability_shade"),
+                ),
                 textMode = ui.stringValue("text_mode", "system"),
-                topBarBlur = ui.booleanValue("top_bar_blur", true),
-                bottomBarBlur = ui.booleanValue("bottom_bar_blur", true),
+                topBarBlurLevel = resolveBlurLevel(
+                    storedLevel = ui.value("top_bar_blur_level")?.let { ui.intValue("top_bar_blur_level") },
+                    legacyEnabled = ui.booleanValue("top_bar_blur", true),
+                ),
+                bottomBarBlurLevel = resolveBlurLevel(
+                    storedLevel = ui.value("bottom_bar_blur_level")?.let { ui.intValue("bottom_bar_blur_level") },
+                    legacyEnabled = ui.booleanValue("bottom_bar_blur", true),
+                ),
                 glassTint = ui.stringValue("glass_tint", "clear"),
                 fontScale = ui.doubleValue("font_scale", 1.08).coerceIn(0.90, 1.35),
                 hiddenServers = ui.arrayValue("hidden_servers").mapNotNull { element ->

@@ -3447,6 +3447,18 @@ class Dashboard(QMainWindow):
         glass_tint = str(ui.get("glass_tint", "clear") or "clear").lower()
         if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:
             glass_tint = "clear"
+        legacy_card_blur = bool(
+            ui.get("readability_blur", False) or ui.get("readability_shade", False)
+        )
+        card_blur_level = self._coerce_blur_level(
+            ui.get("card_blur_level"), 2 if legacy_card_blur else 0
+        )
+        top_bar_blur_level = self._coerce_blur_level(
+            ui.get("top_bar_blur_level"), 2 if bool(ui.get("top_bar_blur", True)) else 0
+        )
+        bottom_bar_blur_level = self._coerce_blur_level(
+            ui.get("bottom_bar_blur_level"), 2 if bool(ui.get("bottom_bar_blur", True)) else 0
+        )
         hidden_servers_value = ui.get("hidden_servers", [])
         if not isinstance(hidden_servers_value, list):
             hidden_servers_value = []
@@ -3493,11 +3505,10 @@ class Dashboard(QMainWindow):
                 "wallpaper_path": str(ui.get("wallpaper_path", "") or ""),
                 "default_page": str(ui.get("default_page", "home") or "home"),
                 "autostart": bool(ui.get("autostart", False)),
-                "readability_blur": bool(ui.get("readability_blur", False)),
-                "readability_shade": bool(ui.get("readability_shade", ui.get("readability_blur", False))),
+                "card_blur_level": card_blur_level,
                 "text_mode": str(ui.get("text_mode", "system") or "system"),
-                "top_bar_blur": bool(ui.get("top_bar_blur", True)),
-                "bottom_bar_blur": bool(ui.get("bottom_bar_blur", True)),
+                "top_bar_blur_level": top_bar_blur_level,
+                "bottom_bar_blur_level": bottom_bar_blur_level,
                 "glass_tint": glass_tint,
                 "font_scale": font_scale,
                 "hidden_servers": hidden_servers,
@@ -3506,6 +3517,13 @@ class Dashboard(QMainWindow):
             },
             "servers": servers,
         }
+
+    @staticmethod
+    def _coerce_blur_level(value, fallback):
+        try:
+            return max(0, min(3, int(value)))
+        except (TypeError, ValueError):
+            return fallback
 
     @staticmethod
     def _history_to_dict(info):
@@ -3609,19 +3627,37 @@ class Dashboard(QMainWindow):
             enabled = bool(ui_payload["autostart"])
             self._set_autostart(enabled)
             ui["autostart"] = enabled
-        if "readability_blur" in ui_payload:
-            ui["readability_blur"] = bool(ui_payload["readability_blur"])
-        if "readability_shade" in ui_payload:
-            ui["readability_shade"] = bool(ui_payload["readability_shade"])
+        if "readability_blur" in ui_payload or "readability_shade" in ui_payload:
+            legacy_enabled = bool(ui_payload.get("readability_blur", False)) or bool(
+                ui_payload.get("readability_shade", False)
+            )
+            ui["card_blur_level"] = 2 if legacy_enabled else 0
         if "text_mode" in ui_payload:
             text_mode = str(ui_payload.get("text_mode", "system")).lower()
             if text_mode not in {"system", "light", "dark"}:
                 raise ValueError("Unknown text color mode")
             ui["text_mode"] = text_mode
         if "top_bar_blur" in ui_payload:
-            ui["top_bar_blur"] = bool(ui_payload["top_bar_blur"])
+            ui["top_bar_blur_level"] = 2 if bool(ui_payload["top_bar_blur"]) else 0
         if "bottom_bar_blur" in ui_payload:
-            ui["bottom_bar_blur"] = bool(ui_payload["bottom_bar_blur"])
+            ui["bottom_bar_blur_level"] = 2 if bool(ui_payload["bottom_bar_blur"]) else 0
+        for blur_field in ("card_blur_level", "top_bar_blur_level", "bottom_bar_blur_level"):
+            if blur_field not in ui_payload:
+                continue
+            try:
+                blur_level = int(ui_payload[blur_field])
+            except (TypeError, ValueError):
+                raise ValueError("Blur level must be a number")
+            if not 0 <= blur_level <= 3:
+                raise ValueError("Blur level must be between 0 and 3")
+            ui[blur_field] = blur_level
+        if any(field in ui_payload for field in ("readability_blur", "readability_shade", "card_blur_level")):
+            ui.pop("readability_blur", None)
+            ui.pop("readability_shade", None)
+        if "top_bar_blur" in ui_payload or "top_bar_blur_level" in ui_payload:
+            ui.pop("top_bar_blur", None)
+        if "bottom_bar_blur" in ui_payload or "bottom_bar_blur_level" in ui_payload:
+            ui.pop("bottom_bar_blur", None)
         if "glass_tint" in ui_payload:
             glass_tint = str(ui_payload.get("glass_tint", "clear")).lower()
             if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:

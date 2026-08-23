@@ -108,6 +108,7 @@ internal enum class V2Tab(
 }
 
 private val V2FontScaleOptions = listOf(0.90, 1.00, 1.08, 1.16, 1.25, 1.35)
+private val V2BlurLevelLabels = listOf("关闭", "轻度", "中度", "重度")
 internal val V2TextModeOptions = listOf(
     "system" to "系统",
     "dark" to "浅色",
@@ -332,11 +333,10 @@ internal fun GpuMonitorDashboardV2(
 
     CompositionLocalProvider(
         LocalDensity provides scaledDensity,
-        LocalV2ReadabilityBlur provides config.ui.readabilityBlur,
-        LocalV2ReadabilityShade provides config.ui.readabilityShade,
+        LocalV2CardBlurLevel provides config.ui.cardBlurLevel,
         LocalV2DarkText provides useDarkText,
-        LocalV2TopBarBlur provides config.ui.topBarBlur,
-        LocalV2BottomBarBlur provides config.ui.bottomBarBlur,
+        LocalV2TopBarBlurLevel provides config.ui.topBarBlurLevel,
+        LocalV2BottomBarBlurLevel provides config.ui.bottomBarBlurLevel,
         LocalV2GlassTint provides config.ui.glassTint,
     ) {
         Box(Modifier.fillMaxSize().background(V2Background)) {
@@ -422,22 +422,17 @@ internal fun GpuMonitorDashboardV2(
                         onWallpaperPreview = { path ->
                             config = config.copy(ui = config.ui.copy(wallpaperPath = path))
                         },
-                        onReadabilityPreview = { blur, shade ->
-                            config = config.copy(
-                                ui = config.ui.copy(
-                                    readabilityBlur = blur,
-                                    readabilityShade = shade,
-                                )
-                            )
+                        onCardBlurLevelPreview = { level ->
+                            config = config.copy(ui = config.ui.copy(cardBlurLevel = level))
                         },
                         onTextModePreview = { mode ->
                             config = config.copy(ui = config.ui.copy(textMode = mode))
                         },
-                        onTopBarBlurPreview = { enabled ->
-                            config = config.copy(ui = config.ui.copy(topBarBlur = enabled))
+                        onTopBarBlurLevelPreview = { level ->
+                            config = config.copy(ui = config.ui.copy(topBarBlurLevel = level))
                         },
-                        onBottomBarBlurPreview = { enabled ->
-                            config = config.copy(ui = config.ui.copy(bottomBarBlur = enabled))
+                        onBottomBarBlurLevelPreview = { level ->
+                            config = config.copy(ui = config.ui.copy(bottomBarBlurLevel = level))
                         },
                         onGlassTintPreview = { tint ->
                             config = config.copy(ui = config.ui.copy(glassTint = tint))
@@ -1439,7 +1434,7 @@ private fun V2GlassToast(backdrop: Backdrop, message: String) {
         shape = RoundedCornerShape(22.dp),
         blurRadius = 14.dp,
         lensRadius = 28.dp,
-        enableBlur = true,
+        blurLevelOverride = BlurLevelMedium,
     ) {
         Row(
             Modifier.fillMaxSize().padding(horizontal = 10.dp),
@@ -1577,7 +1572,7 @@ private fun V2GlassDialogFrame(
             tintAlpha = 0.30f,
             blurRadius = 22.dp,
             lensRadius = 48.dp,
-            enableBlur = true,
+            blurLevelOverride = BlurLevelMedium,
         ) {
             Column(
                 Modifier.fillMaxWidth().padding(25.dp),
@@ -1607,7 +1602,7 @@ private fun V2GlassDialogButton(
         tintAlpha = if (enabled) 0.12f else 0.045f,
         blurRadius = 10.dp,
         lensRadius = 26.dp,
-        enableBlur = true,
+        blurLevelOverride = BlurLevelMedium,
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
@@ -1636,10 +1631,10 @@ private fun V2SettingsPage(
     updateMessage: String,
     onCheckUpdate: () -> Unit,
     onWallpaperPreview: (String) -> Unit,
-    onReadabilityPreview: (Boolean, Boolean) -> Unit,
+    onCardBlurLevelPreview: (Int) -> Unit,
     onTextModePreview: (String) -> Unit,
-    onTopBarBlurPreview: (Boolean) -> Unit,
-    onBottomBarBlurPreview: (Boolean) -> Unit,
+    onTopBarBlurLevelPreview: (Int) -> Unit,
+    onBottomBarBlurLevelPreview: (Int) -> Unit,
     onGlassTintPreview: (String) -> Unit,
     onFontScalePreview: (Double) -> Unit,
     onHiddenServersPreview: (List<String>) -> Unit,
@@ -1660,11 +1655,10 @@ private fun V2SettingsPage(
     var idleThreshold by remember { mutableIntStateOf(config.polling.idleThresholdSeconds) }
     var defaultPage by remember { mutableStateOf(config.ui.defaultPage) }
     var autostart by remember { mutableStateOf(config.ui.autostart) }
-    var readabilityBlur by remember { mutableStateOf(config.ui.readabilityBlur) }
-    var readabilityShade by remember { mutableStateOf(config.ui.readabilityShade) }
+    var cardBlurLevel by remember { mutableIntStateOf(config.ui.cardBlurLevel) }
     var textMode by remember { mutableStateOf(config.ui.textMode) }
-    var topBarBlur by remember { mutableStateOf(config.ui.topBarBlur) }
-    var bottomBarBlur by remember { mutableStateOf(config.ui.bottomBarBlur) }
+    var topBarBlurLevel by remember { mutableIntStateOf(config.ui.topBarBlurLevel) }
+    var bottomBarBlurLevel by remember { mutableIntStateOf(config.ui.bottomBarBlurLevel) }
     var glassTint by remember { mutableStateOf(config.ui.glassTint) }
     var fontScale by remember { mutableStateOf(config.ui.fontScale) }
     var hiddenServers by remember { mutableStateOf(config.ui.hiddenServers.toSet()) }
@@ -1681,11 +1675,10 @@ private fun V2SettingsPage(
         idleThreshold = config.polling.idleThresholdSeconds
         defaultPage = config.ui.defaultPage
         autostart = config.ui.autostart
-        readabilityBlur = config.ui.readabilityBlur
-        readabilityShade = config.ui.readabilityShade
+        cardBlurLevel = config.ui.cardBlurLevel
         textMode = config.ui.textMode
-        topBarBlur = config.ui.topBarBlur
-        bottomBarBlur = config.ui.bottomBarBlur
+        topBarBlurLevel = config.ui.topBarBlurLevel
+        bottomBarBlurLevel = config.ui.bottomBarBlurLevel
         glassTint = config.ui.glassTint
         fontScale = config.ui.fontScale
         hiddenServers = config.ui.hiddenServers.toSet()
@@ -1741,10 +1734,13 @@ private fun V2SettingsPage(
                         .padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("文字颜色", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("跟随 Windows 或手动选择界面明暗", color = V2Muted, fontSize = 9.sp)
-                    }
+                    Text(
+                        "主题",
+                        color = V2Text,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
                     V2SegmentedSlider(
                         backdrop = backdrop,
                         labels = V2TextModeOptions.map { it.second },
@@ -1808,25 +1804,20 @@ private fun V2SettingsPage(
                         .padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.width(128.dp)) {
-                        Text("可读性", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("只作用于玻璃卡片", color = V2Muted, fontSize = 9.sp)
-                    }
-                    val readabilityModes = listOf(
-                        false to false,
-                        true to false,
-                        false to true,
-                        true to true,
+                    Text(
+                        "玻璃卡片",
+                        color = V2Text,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.width(128.dp),
                     )
                     V2SegmentedSlider(
                         backdrop = backdrop,
-                        labels = listOf("关闭", "模糊", "暗层", "暗层 & 模糊"),
-                        selectedIndex = readabilityModes.indexOf(readabilityBlur to readabilityShade).coerceAtLeast(0),
+                        labels = V2BlurLevelLabels,
+                        selectedIndex = normalizeBlurLevel(cardBlurLevel),
                         onSelected = { index ->
-                            val (blur, shade) = readabilityModes[index]
-                            readabilityBlur = blur
-                            readabilityShade = shade
-                            onReadabilityPreview(blur, shade)
+                            cardBlurLevel = index
+                            onCardBlurLevelPreview(index)
                         },
                         modifier = Modifier.weight(1f),
                         height = 34.dp,
@@ -1834,44 +1825,50 @@ private fun V2SettingsPage(
                 }
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.035f))
-                        .clickable {
-                            topBarBlur = !topBarBlur
-                            onTopBarBlurPreview(topBarBlur)
-                        }.padding(horizontal = 14.dp, vertical = 9.dp),
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("顶栏模糊", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("单独控制悬浮顶栏的背景模糊", color = V2Muted, fontSize = 9.sp)
-                    }
-                    Switch(
-                        checked = topBarBlur,
-                        onCheckedChange = {
-                            topBarBlur = it
-                            onTopBarBlurPreview(it)
+                    Text(
+                        "顶栏模糊",
+                        color = V2Text,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.width(128.dp),
+                    )
+                    V2SegmentedSlider(
+                        backdrop = backdrop,
+                        labels = V2BlurLevelLabels,
+                        selectedIndex = normalizeBlurLevel(topBarBlurLevel),
+                        onSelected = { index ->
+                            topBarBlurLevel = index
+                            onTopBarBlurLevelPreview(index)
                         },
-                        colors = SwitchDefaults.colors(checkedThumbColor = V2AccentStrong, checkedTrackColor = V2AccentStrong.copy(alpha = 0.45f)),
+                        modifier = Modifier.weight(1f),
+                        height = 34.dp,
                     )
                 }
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.035f))
-                        .clickable {
-                            bottomBarBlur = !bottomBarBlur
-                            onBottomBarBlurPreview(bottomBarBlur)
-                        }.padding(horizontal = 14.dp, vertical = 9.dp),
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("底栏模糊", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("单独控制底栏与玻璃滑块，不受增加可读性影响", color = V2Muted, fontSize = 9.sp)
-                    }
-                    Switch(
-                        checked = bottomBarBlur,
-                        onCheckedChange = {
-                            bottomBarBlur = it
-                            onBottomBarBlurPreview(it)
+                    Text(
+                        "底栏模糊",
+                        color = V2Text,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.width(128.dp),
+                    )
+                    V2SegmentedSlider(
+                        backdrop = backdrop,
+                        labels = V2BlurLevelLabels,
+                        selectedIndex = normalizeBlurLevel(bottomBarBlurLevel),
+                        onSelected = { index ->
+                            bottomBarBlurLevel = index
+                            onBottomBarBlurLevelPreview(index)
                         },
-                        colors = SwitchDefaults.colors(checkedThumbColor = V2AccentStrong, checkedTrackColor = V2AccentStrong.copy(alpha = 0.45f)),
+                        modifier = Modifier.weight(1f),
+                        height = 34.dp,
                     )
                 }
                 Text("进入后默认页面", color = V2Dim, fontSize = 11.sp)
@@ -2087,11 +2084,10 @@ private fun V2SettingsPage(
                             wallpaperPath = wallpaper,
                             defaultPage = defaultPage,
                             autostart = autostart,
-                            readabilityBlur = readabilityBlur,
-                            readabilityShade = readabilityShade,
+                            cardBlurLevel = cardBlurLevel,
                             textMode = textMode,
-                            topBarBlur = topBarBlur,
-                            bottomBarBlur = bottomBarBlur,
+                            topBarBlurLevel = topBarBlurLevel,
+                            bottomBarBlurLevel = bottomBarBlurLevel,
                             glassTint = glassTint,
                             fontScale = fontScale,
                             hiddenServers = hiddenServers.sorted(),
