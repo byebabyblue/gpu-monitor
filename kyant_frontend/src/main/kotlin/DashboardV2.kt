@@ -711,8 +711,11 @@ private fun V2StartupScreen(showSlowMessage: Boolean) {
                     )
                 }
                 Box(
-                    modifier = Modifier.size(94.dp).clip(RoundedCornerShape(29.dp))
-                        .background(Color.White.copy(alpha = 0.055f)),
+                    modifier = Modifier.size(94.dp)
+                        .background(
+                            color = Color.White.copy(alpha = 0.055f),
+                            shape = RoundedCornerShape(29.dp),
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
