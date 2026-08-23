@@ -193,6 +193,8 @@ internal fun V2GlassSurface(
     tintAlpha: Float = 0.25f,
     blurRadius: Dp = 14.dp,
     lensRadius: Dp = 29.dp,
+    lensAmount: Dp? = null,
+    lensDepthEffect: Boolean = false,
     enableBlur: Boolean? = null,
     content: @Composable () -> Unit,
 ) {
@@ -227,9 +229,17 @@ internal fun V2GlassSurface(
                 effects = {
                     vibrancy()
                     if (surfaceBlur) blur(blurRadius.toPx())
+                    val resolvedLensHeight = if (pureGlass) 36.dp else lensRadius
+                    val resolvedLensAmount = if (pureGlass) {
+                        25.dp
+                    } else {
+                        lensAmount ?: (lensRadius.value * 0.72f).dp
+                    }
                     lens(
-                        if (pureGlass) 36.dp.toPx() else lensRadius.toPx(),
-                        if (pureGlass) 25.dp.toPx() else (lensRadius.value * 0.72f).dp.toPx(),
+                        resolvedLensHeight.toPx(),
+                        resolvedLensAmount.toPx(),
+                        lensDepthEffect,
+                        false,
                     )
                 },
                 highlight = { Highlight.Ambient },
@@ -393,7 +403,9 @@ internal fun V2BottomBar(
             tintColor = Color.White,
             tintAlpha = 0.055f,
             blurRadius = 13.dp,
-            lensRadius = 40.dp,
+            lensRadius = 20.dp,
+            lensAmount = 12.dp,
+            lensDepthEffect = true,
             enableBlur = bottomBarBlur,
         ) {
             Box(Modifier.fillMaxSize()) {
@@ -426,7 +438,7 @@ internal fun V2BottomBar(
                             effects = {
                                 vibrancy()
                                 if (bottomBarBlur) blur(10.dp.toPx())
-                                lens(33.dp.toPx(), 23.dp.toPx())
+                                lens(16.dp.toPx(), 10.dp.toPx(), true, false)
                             },
                             highlight = { Highlight.Ambient },
                             onDrawSurface = {
