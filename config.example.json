@@ -11,6 +11,7 @@
     "wallpaper_path": "",
     "default_page": "home",
     "autostart": false,
+    "start_minimized_to_tray": false,
     "card_blur_level": 0,
     "font_scale": 1.08,
     "top_bar_blur_level": 2,

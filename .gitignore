@@ -21,12 +21,15 @@ backups/
 command_analysis_queue.jsonl
 task_notes.json
 task_note_patterns.json
+**/logs/
 __pycache__/
 *.py[cod]
 
 # Build output and packaged binaries
 .gradle/
 **/build/
+dist/
+work/pyinstaller-*/
 GPU-Monitor-Kyant-Portable/backend/
 GPU-Monitor-Kyant-Portable/frontend/
 *.exe

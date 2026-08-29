@@ -204,6 +204,7 @@ class ServerInfo:
 
         self.disk_used = self.disk_total = self.disk_pct = 0.0
         self.disks: list[dict] = []  # individual filesystems, e.g. /data1, /data2
+        self.disk_error = ""
 
         self.running_tasks: list[dict] = []
         self.queued_tasks: list[dict]  = []
@@ -257,6 +258,8 @@ def _friendly_ssh_error(error, phase="connect"):
     lowered = message.lower()
     if "dll load failed" in lowered and "_ctypes" in lowered:
         return "本机后端组件加载失败，请重新安装最新版本"
+    if phase == "disk" and "unable to read disk usage" in lowered:
+        return "未找到可读取的挂载盘"
 
     if HAS_PARAMIKO:
         if isinstance(error, paramiko.BadHostKeyException):
@@ -567,7 +570,12 @@ BEGIN {
     def __init__(self, ssh: SSHConnection, disk_path: str = "."):
         self.ssh = ssh
         self.disk_path = str(disk_path or ".").strip() or "."
-        self._last_disk_poll = 0.0
+        # A new SSH connection must always perform one disk scan.  Keep a
+        # separate retry deadline so an unavailable mount does not turn the
+        # whole server snapshot into a failed poll.
+        self._disk_refresh_pending = True
+        self._next_disk_poll = 0.0
+        self._scheduled_disk_interval = None
         self._last_process_poll = 0.0
         self._gpu_pids: set[str] = set()
 
@@ -577,9 +585,27 @@ BEGIN {
         self._gpu(info)
 
         now = time.monotonic()
-        if now - self._last_disk_poll >= RefreshSettings.disk_interval:
-            self._disk(info)
-            self._last_disk_poll = now
+        disk_interval = max(5, int(RefreshSettings.disk_interval))
+        if (
+            self._disk_refresh_pending
+            or now >= self._next_disk_poll
+            or self._scheduled_disk_interval != disk_interval
+        ):
+            try:
+                self._disk(info)
+                info.disk_error = ""
+                self._disk_refresh_pending = False
+                self._scheduled_disk_interval = disk_interval
+                self._next_disk_poll = now + disk_interval
+            except Exception as exc:
+                # A remote data mount can appear after SSH comes up.  Keep
+                # CPU/GPU data usable and retry the mount scan soon instead
+                # of marking the whole server disconnected for six hours.
+                info.disk_error = _friendly_ssh_error(exc, phase="disk")
+                self._disk_refresh_pending = False
+                self._scheduled_disk_interval = disk_interval
+                retry_seconds = min(30, disk_interval)
+                self._next_disk_poll = now + retry_seconds
 
         if now - self._last_process_poll >= RefreshSettings.process_interval:
             running, queued = self._processes()
@@ -3524,6 +3550,7 @@ class Dashboard(QMainWindow):
                 "wallpaper_path": str(ui.get("wallpaper_path", "") or ""),
                 "default_page": str(ui.get("default_page", "home") or "home"),
                 "autostart": bool(ui.get("autostart", False)),
+                "start_minimized_to_tray": bool(ui.get("start_minimized_to_tray", False)),
                 "card_blur_level": card_blur_level,
                 "text_mode": str(ui.get("text_mode", "system") or "system"),
                 "top_bar_blur_level": top_bar_blur_level,
@@ -3649,6 +3676,8 @@ class Dashboard(QMainWindow):
             enabled = bool(ui_payload["autostart"])
             self._set_autostart(enabled)
             ui["autostart"] = enabled
+        if "start_minimized_to_tray" in ui_payload:
+            ui["start_minimized_to_tray"] = bool(ui_payload["start_minimized_to_tray"])
         if "readability_blur" in ui_payload or "readability_shade" in ui_payload:
             legacy_enabled = bool(ui_payload.get("readability_blur", False)) or bool(
                 ui_payload.get("readability_shade", False)
@@ -4081,6 +4110,7 @@ class Dashboard(QMainWindow):
                 "percent": info.disk_pct,
                 "volumes": info.disks,
             },
+            "disk_error": info.disk_error,
             "gpus": [
                 {
                     "index": g["idx"],

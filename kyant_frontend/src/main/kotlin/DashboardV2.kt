@@ -123,6 +123,8 @@ internal val V2DiskIntervalOptions = listOf(
     24 * 60 * 60 to "24h",
 )
 
+private const val StartupConfigTimeoutMillis = 12_000L
+
 internal fun normalizeDiskInterval(seconds: Int): Int {
     val positiveSeconds = seconds.coerceAtLeast(1)
     return V2DiskIntervalOptions.minByOrNull { (option, _) ->
@@ -155,6 +157,7 @@ internal fun GpuMonitorDashboardV2(
     showCloseDialog: Boolean,
     onDismissCloseDialog: () -> Unit,
     onTrayLightweightPolicyChanged: (Boolean, Int) -> Unit,
+    onBackendRetry: () -> Unit,
     onMinimizeRequest: () -> Unit,
     onExitRequest: () -> Unit,
 ) {
@@ -173,6 +176,7 @@ internal fun GpuMonitorDashboardV2(
     var refreshTick by remember { mutableIntStateOf(0) }
     var configTick by remember { mutableIntStateOf(0) }
     var configLoaded by remember { mutableStateOf(false) }
+    var configAvailable by remember { mutableStateOf(false) }
     var configGeneration by remember { mutableIntStateOf(0) }
     var defaultPageApplied by remember { mutableStateOf(false) }
     var settingsBusy by remember { mutableStateOf(false) }
@@ -192,6 +196,7 @@ internal fun GpuMonitorDashboardV2(
     var startupWallpaperReadyPath by remember { mutableStateOf<String?>(null) }
     var startupMinimumElapsed by remember { mutableStateOf(false) }
     var startupSlowMessageVisible by remember { mutableStateOf(false) }
+    var startupError by remember { mutableStateOf("") }
     var startupFinished by remember { mutableStateOf(false) }
     var systemAppsUseLightTheme by remember { mutableStateOf(false) }
     var systemAppearanceLoaded by remember { mutableStateOf(false) }
@@ -260,10 +265,19 @@ internal fun GpuMonitorDashboardV2(
 
     LaunchedEffect(apiPort, configTick) {
         configLoaded = false
+        configAvailable = false
+        startupError = ""
+        val deadline = System.nanoTime() + StartupConfigTimeoutMillis * 1_000_000L
         while (true) {
             val result = withContext(Dispatchers.IO) { MonitorClient.fetchConfig(apiPort) }
             val fresh = result.getOrNull()
             if (fresh == null) {
+                if (System.nanoTime() >= deadline) {
+                    configLoaded = true
+                    startupError = "后端未响应，可能被安全软件隔离；点击右上角状态重试"
+                    apiMessage = "后端未连接 · 点击重试"
+                    break
+                }
                 delay(650)
                 continue
             }
@@ -288,6 +302,8 @@ internal fun GpuMonitorDashboardV2(
             }
 
             config = loaded
+            configAvailable = true
+            startupError = ""
             if (!defaultPageApplied) {
                 selectedTab = V2Tab.fromKey(loaded.ui.defaultPage)
                 defaultPageApplied = true
@@ -352,7 +368,7 @@ internal fun GpuMonitorDashboardV2(
         if (visibleServers.isEmpty()) "LIVE · 0/0 在线"
         else "LIVE · ${visibleServers.count { it.connected }}/${visibleServers.size} 在线"
     } else {
-        apiMessage
+        startupError.ifBlank { apiMessage }
     }
     val hostKeyPrompt = hostKeyPrompts.firstOrNull()
     val baseDensity = LocalDensity.current
@@ -431,8 +447,8 @@ internal fun GpuMonitorDashboardV2(
                         configGeneration = configGeneration,
                         serverCount = visibleServers.size,
                         serverNames = servers.map { it.name },
-                        saveBusy = settingsBusy || !configLoaded,
-                        saveMessage = if (configLoaded) settingsMessage else "正在载入已有设置，完成前不会覆盖配置",
+                        saveBusy = settingsBusy || !configAvailable,
+                        saveMessage = if (configAvailable) settingsMessage else "后端未连接，设置暂不会覆盖已有配置",
                         addBusy = addServerBusy,
                         addMessage = addServerMessage,
                         serverActionMessage = removeServerMessage,
@@ -497,8 +513,8 @@ internal fun GpuMonitorDashboardV2(
                             pendingDeleteServer = name
                         },
                         onSave = { polling, ui ->
-                            if (!configLoaded) {
-                                settingsMessage = "已有设置仍在载入，请稍候"
+                            if (!configAvailable) {
+                                settingsMessage = "后端未连接，请先点击右上角状态重试"
                             } else {
                                 settingsBusy = true
                                 settingsMessage = "正在保存…"
@@ -557,7 +573,11 @@ internal fun GpuMonitorDashboardV2(
                     page = selectedTab,
                     apiOnline = apiOnline,
                     apiMessage = visibleApiMessage,
-                    onRefresh = { refreshTick++ },
+                    onRefresh = {
+                        refreshTick++
+                        configTick++
+                        onBackendRetry()
+                    },
                 )
             }
 
@@ -1190,6 +1210,15 @@ private fun V2NodePage(
                         fontSize = 11.sp,
                     )
                 }
+                if (selected.diskError.isNotBlank()) {
+                    Text(
+                        "启动时读取挂载盘失败：${selected.diskError} · 将自动重试",
+                        color = V2Yellow,
+                        fontSize = 10.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 if (selected.disks.isEmpty()) {
                     V2GlassSurface(backdrop, Modifier.fillMaxWidth().height(160.dp), RoundedCornerShape(22.dp), tintAlpha = 0.17f) {
                         V2EmptyState("该服务器尚未返回 /data* 或 /root/data* 挂载盘")
@@ -1700,6 +1729,7 @@ private fun V2SettingsPage(
     var idleThreshold by remember { mutableIntStateOf(config.polling.idleThresholdSeconds) }
     var defaultPage by remember { mutableStateOf(config.ui.defaultPage) }
     var autostart by remember { mutableStateOf(config.ui.autostart) }
+    var startMinimizedToTray by remember { mutableStateOf(config.ui.startMinimizedToTray) }
     var cardBlurLevel by remember { mutableIntStateOf(config.ui.cardBlurLevel) }
     var textMode by remember { mutableStateOf(config.ui.textMode) }
     var topBarBlurLevel by remember { mutableIntStateOf(config.ui.topBarBlurLevel) }
@@ -1724,6 +1754,7 @@ private fun V2SettingsPage(
         idleThreshold = config.polling.idleThresholdSeconds
         defaultPage = config.ui.defaultPage
         autostart = config.ui.autostart
+        startMinimizedToTray = config.ui.startMinimizedToTray
         cardBlurLevel = config.ui.cardBlurLevel
         textMode = config.ui.textMode
         topBarBlurLevel = config.ui.topBarBlurLevel
@@ -1945,6 +1976,22 @@ private fun V2SettingsPage(
                     Switch(
                         checked = autostart,
                         onCheckedChange = { autostart = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = V2AccentStrong, checkedTrackColor = V2AccentStrong.copy(alpha = 0.45f)),
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.035f))
+                        .clickable { startMinimizedToTray = !startMinimizedToTray }
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("开机最小化到托盘", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("开机自启动时不显示主窗口，点击托盘图标打开", color = V2Muted, fontSize = 9.sp)
+                    }
+                    Switch(
+                        checked = startMinimizedToTray,
+                        onCheckedChange = { startMinimizedToTray = it },
                         colors = SwitchDefaults.colors(checkedThumbColor = V2AccentStrong, checkedTrackColor = V2AccentStrong.copy(alpha = 0.45f)),
                     )
                 }
@@ -2188,6 +2235,7 @@ private fun V2SettingsPage(
                             wallpaperPath = wallpaper,
                             defaultPage = defaultPage,
                             autostart = autostart,
+                            startMinimizedToTray = startMinimizedToTray,
                             cardBlurLevel = cardBlurLevel,
                             textMode = textMode,
                             topBarBlurLevel = topBarBlurLevel,

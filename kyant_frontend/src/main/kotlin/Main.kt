@@ -24,10 +24,13 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,7 +50,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
-import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.google.gson.JsonElement
@@ -64,16 +66,25 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.Dimension
 import java.awt.EventQueue
+import java.awt.Font
+import java.awt.GraphicsEnvironment
+import java.awt.MenuItem
+import java.awt.PopupMenu
 import java.awt.Rectangle
 import java.awt.SystemTray
+import java.awt.TrayIcon
 import java.awt.Window as AwtWindow
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.net.HttpURLConnection
 import java.net.URI
+import javax.imageio.ImageIO
 import kotlin.math.roundToInt
 
 private const val API_PORT = 8766
@@ -304,6 +315,93 @@ private fun showcaseServer(): ServerSnapshot {
 private fun withShowcaseServer(servers: List<ServerSnapshot>): List<ServerSnapshot> =
     listOf(showcaseServer()) + servers.filterNot { it.status == "showcase" }
 
+private const val TrayOpenLabel = "\u6253\u5F00 Xerver"
+private const val TrayExitLabel = "\u9000\u51FA Xerver"
+
+private object TrayResources
+
+private fun trayMenuFont(): Font {
+    val available = runCatching {
+        GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toSet()
+    }.getOrDefault(emptySet())
+    val family = listOf(
+        "Microsoft YaHei UI",
+        "Microsoft YaHei",
+        "SimSun",
+        "Noto Sans CJK SC",
+        "Dialog",
+    ).firstOrNull { it in available } ?: "Dialog"
+    return Font(family, Font.PLAIN, 12)
+}
+
+@Composable
+private fun NativeSystemTray(
+    tooltip: String,
+    onOpen: () -> Unit,
+    onExit: () -> Unit,
+    onUnavailable: () -> Unit,
+) {
+    val latestOnOpen = rememberUpdatedState(onOpen)
+    val latestOnExit = rememberUpdatedState(onExit)
+    val latestOnUnavailable = rememberUpdatedState(onUnavailable)
+    val trayIconState = remember { mutableStateOf<TrayIcon?>(null) }
+
+    DisposableEffect(Unit) {
+        val tray = SystemTray.getSystemTray()
+        val image = TrayResources::class.java
+            .getResourceAsStream("/app-icon.png")
+            ?.use { stream -> ImageIO.read(stream) }
+        if (image == null) {
+            latestOnUnavailable.value.invoke()
+            return@DisposableEffect onDispose { }
+        }
+
+        val trayMenuFont = trayMenuFont()
+        val popup = PopupMenu().apply { this.font = trayMenuFont }
+        val openItem = MenuItem(TrayOpenLabel).apply {
+            this.font = trayMenuFont
+            addActionListener { latestOnOpen.value.invoke() }
+        }
+        val exitItem = MenuItem(TrayExitLabel).apply {
+            this.font = trayMenuFont
+            addActionListener { latestOnExit.value.invoke() }
+        }
+        popup.add(openItem)
+        popup.addSeparator()
+        popup.add(exitItem)
+
+        val icon = TrayIcon(image, "Xerver", popup).apply {
+            isImageAutoSize = true
+        }
+        val mouseListener = object : MouseAdapter() {
+            override fun mouseClicked(event: MouseEvent) {
+                if (event.button == MouseEvent.BUTTON1 && event.clickCount == 1) {
+                    latestOnOpen.value.invoke()
+                }
+            }
+        }
+        icon.addMouseListener(mouseListener)
+        try {
+            tray.add(icon)
+        } catch (_: Exception) {
+            icon.removeMouseListener(mouseListener)
+            latestOnUnavailable.value.invoke()
+            return@DisposableEffect onDispose { }
+        }
+        trayIconState.value = icon
+
+        onDispose {
+            icon.removeMouseListener(mouseListener)
+            tray.remove(icon)
+            trayIconState.value = null
+        }
+    }
+
+    SideEffect {
+        trayIconState.value?.toolTip = tooltip
+    }
+}
+
 fun main() {
     val bundledBackend = BundledBackendController()
     MonitorInstallation.ensureConfigFile()
@@ -315,8 +413,14 @@ fun main() {
             width = launchBounds.width.dp,
             height = launchBounds.height.dp,
         )
-        val traySupported = remember { SystemTray.isSupported() }
-        var windowVisible by remember { mutableStateOf(true) }
+        val traySupported = remember {
+            runCatching { SystemTray.isSupported() }.getOrDefault(false)
+        }
+        val backendScope = rememberCoroutineScope()
+        val startMinimizedToTray = remember { MonitorInstallation.startMinimizedToTray() }
+        var windowVisible by remember {
+            mutableStateOf(!(startMinimizedToTray && traySupported))
+        }
         var awtWindow by remember { mutableStateOf<AwtWindow?>(null) }
         var showCloseDialog by remember { mutableStateOf(false) }
         var trayLightweightEnabled by remember { mutableStateOf(false) }
@@ -358,20 +462,20 @@ fun main() {
             }
         }
 
+        LaunchedEffect(Unit) {
+            withContext(Dispatchers.IO) { bundledBackend.startIfAvailable() }
+        }
+
         if (traySupported) {
-            Tray(
-                icon = appIcon,
+            NativeSystemTray(
                 tooltip = if (lightweightModeActive) {
                     "Xerver · 轻量化模式"
                 } else {
                     "Xerver"
                 },
-                onAction = restoreWindow,
-                menu = {
-                    Item("打开 Xerver", onClick = restoreWindow)
-                    Separator()
-                    Item("直接退出", onClick = exitGpuMonitor)
-                },
+                onOpen = restoreWindow,
+                onExit = exitGpuMonitor,
+                onUnavailable = { windowVisible = true },
             )
         }
 
@@ -420,15 +524,17 @@ fun main() {
                     if (awtWindow === window) awtWindow = null
                 }
             }
-            LaunchedEffect(Unit) {
-                withContext(Dispatchers.IO) { bundledBackend.startIfAvailable() }
-            }
                 GpuMonitorDashboardV2(
                     showCloseDialog = showCloseDialog,
                     onDismissCloseDialog = { showCloseDialog = false },
                     onTrayLightweightPolicyChanged = { enabled, delayMinutes ->
                         trayLightweightEnabled = enabled
                         trayLightweightDelayMinutes = normalizeTrayLightweightDelayMinutes(delayMinutes)
+                    },
+                    onBackendRetry = {
+                        backendScope.launch(Dispatchers.IO) {
+                            bundledBackend.startIfAvailable()
+                        }
                     },
                     onMinimizeRequest = {
                         MonitorInstallation.persistWindowBoundsIfEnabled(lastFloatingBounds)

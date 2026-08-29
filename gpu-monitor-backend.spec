@@ -49,7 +49,10 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX-compressed PyInstaller one-file executables are more likely to be
+    # quarantined by endpoint security products.  Keep the backend uncompressed
+    # so the packaged installer is easier to trust and diagnose.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,

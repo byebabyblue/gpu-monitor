@@ -15,6 +15,7 @@ internal const val BlurLevelLight = 1
 internal const val BlurLevelMedium = 2
 internal const val BlurLevelHeavy = 3
 internal const val DefaultTrayLightweightDelayMinutes = 5
+internal const val DefaultStartMinimizedToTray = false
 internal const val DefaultGpuHistoryRangeMinutes = 24 * 60
 internal val GpuHistoryRangeOptions = listOf(15, 60, 6 * 60, DefaultGpuHistoryRangeMinutes)
 
@@ -82,6 +83,7 @@ internal data class MonitorServer(
     val status: String,
     val connected: Boolean,
     val error: String,
+    val diskError: String = "",
     val cpuPercent: Double,
     val cpuCores: Int,
     val memoryPercent: Double,
@@ -134,6 +136,7 @@ internal data class UiSettings(
     val wallpaperPath: String = "",
     val defaultPage: String = "home",
     val autostart: Boolean = false,
+    val startMinimizedToTray: Boolean = DefaultStartMinimizedToTray,
     val cardBlurLevel: Int = BlurLevelOff,
     val textMode: String = "system",
     val topBarBlurLevel: Int = BlurLevelMedium,
@@ -246,6 +249,7 @@ internal object MonitorClient {
             addProperty("wallpaper_path", ui.wallpaperPath)
             addProperty("default_page", ui.defaultPage)
             addProperty("autostart", ui.autostart)
+            addProperty("start_minimized_to_tray", ui.startMinimizedToTray)
             addProperty("card_blur_level", normalizeBlurLevel(ui.cardBlurLevel))
             addProperty("text_mode", ui.textMode)
             addProperty("top_bar_blur_level", normalizeBlurLevel(ui.topBarBlurLevel))
@@ -388,6 +392,7 @@ internal object MonitorClient {
             status = obj.stringValue("status", "unknown"),
             connected = obj.booleanValue("connected"),
             error = obj.stringValue("error"),
+            diskError = obj.stringValue("disk_error"),
             cpuPercent = cpu.doubleValue("percent"),
             cpuCores = cpu.intValue("cores"),
             memoryPercent = memory.doubleValue("percent"),
@@ -432,6 +437,10 @@ internal object MonitorClient {
                 wallpaperPath = ui.stringValue("wallpaper_path"),
                 defaultPage = ui.stringValue("default_page", "home"),
                 autostart = ui.booleanValue("autostart"),
+                startMinimizedToTray = ui.booleanValue(
+                    "start_minimized_to_tray",
+                    DefaultStartMinimizedToTray,
+                ),
                 cardBlurLevel = resolveBlurLevel(
                     storedLevel = ui.value("card_blur_level")?.let { ui.intValue("card_blur_level") },
                     legacyEnabled = ui.booleanValue("readability_blur") || ui.booleanValue("readability_shade"),

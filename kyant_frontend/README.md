@@ -6,11 +6,22 @@ This folder contains the Compose Desktop frontend for Xerver. The original
 
 ## Build the Windows installer
 
-Install JDK 21, then run from this folder:
+Install Python with PyInstaller and JDK 21, then stage the backend from the
+repository root:
+
+```powershell
+.\tools\build_backend.ps1
+```
+
+Then build the installer from this folder:
 
 ```powershell
 pwsh -NoProfile -Command "$env:JAVA_HOME='C:\\Path\\To\\JDK-21'; .\gradlew.bat packageExe"
 ```
+
+The staging script uses `gpu-monitor-backend.spec`, which intentionally keeps
+UPX compression disabled. This avoids the extra self-unpacking/compression
+layer that commonly causes unsigned monitoring backends to be quarantined.
 
 The generated EXE installer includes the frontend runtime and the bundled
 backend. An installed copy stores its machine-specific configuration under
@@ -19,9 +30,22 @@ backend. An installed copy stores its machine-specific configuration under
 the user's servers and preferences.
 
 The application and installer use `src/main/resources/app-icon.png` and
-`app-icon.ico`. Version `1.0.0` can check the latest published release from
+`app-icon.ico`. Version `1.0.1` can check the latest published release from
 `https://github.com/byebabyblue/gpu-monitor/releases` in Settings. The check
 only reads public GitHub release metadata; it does not upload local settings.
+
+The Settings page includes `开机最小化到托盘`. When enabled together with
+`开机自启动`, Windows starts Xerver without showing the main window; use the
+tray icon to open it. The tray menu is a native Windows menu with an explicit
+CJK-capable font, so Chinese labels do not depend on the Compose menu renderer.
+
+If the startup screen cannot reach the local backend, it now falls back to the
+offline dashboard after a short timeout and lets the status pill retry the
+backend. Backend startup output is kept at
+`%APPDATA%\Xerver\logs\backend.log`, which makes it possible to distinguish
+a missing/quarantined executable from a configuration or runtime error. The
+PyInstaller spec leaves the backend uncompressed to reduce false positives from
+security software.
 
 Selected wallpapers are copied to `%LOCALAPPDATA%\Xerver\wallpapers`.
 The untouched source is kept under `original`, while the UI loads a downscaled

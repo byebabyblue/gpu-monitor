@@ -10,6 +10,8 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 internal data class MonitorWindowBounds(
@@ -59,6 +61,21 @@ internal object MonitorInstallation {
         return null
     }
 
+    fun startMinimizedToTray(): Boolean {
+        val candidates = listOfNotNull(configFile(), legacyConfigFile()).distinctBy { it.absolutePath }
+        for (config in candidates) {
+            if (!config.isFile) continue
+            val enabled = runCatching {
+                val root = JsonParser.parseReader(config.reader(StandardCharsets.UTF_8)).asJsonObject
+                root.getAsJsonObject("ui")
+                    ?.get("start_minimized_to_tray")
+                    ?.asBoolean
+            }.getOrNull()
+            if (enabled != null) return enabled
+        }
+        return DefaultStartMinimizedToTray
+    }
+
     fun ensureConfigFile(): File {
         val config = configFile()
         if (config.isFile) return config
@@ -87,6 +104,7 @@ internal object MonitorInstallation {
                 addProperty("wallpaper_path", "")
                 addProperty("default_page", "home")
                 addProperty("autostart", false)
+                addProperty("start_minimized_to_tray", DefaultStartMinimizedToTray)
                 addProperty("card_blur_level", BlurLevelOff)
                 addProperty("text_mode", "system")
                 addProperty("top_bar_blur_level", BlurLevelMedium)
@@ -256,11 +274,18 @@ internal class BundledBackendController {
         val resources = System.getProperty("compose.application.resources.dir")
             ?.takeIf { it.isNotBlank() }
             ?.let(::File)
-            ?: return
+        if (resources == null) {
+            appendBackendLog("未找到应用资源目录，无法启动内置后端")
+            return
+        }
         val backend = File(resources, "backend/gpu-monitor-backend.exe")
-        if (!backend.isFile) return
+        if (!backend.isFile) {
+            appendBackendLog("未找到内置后端：${backend.absolutePath}")
+            return
+        }
 
         val config = MonitorInstallation.ensureConfigFile()
+        val logFile = backendLogFile()
         val builder = ProcessBuilder(
             backend.absolutePath,
             "--backend-only",
@@ -270,11 +295,23 @@ internal class BundledBackendController {
             config.absolutePath,
         )
             .directory(config.parentFile)
-            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .redirectInput(ProcessBuilder.Redirect.DISCARD)
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
 
         packagedFrontendPath()?.let { builder.environment()["GPU_MONITOR_FRONTEND_EXE"] = it }
-        process = builder.start()
+        runCatching {
+            val launched = builder.start()
+            process = launched
+            appendBackendLog("已启动内置后端 pid=${launched.pid()} port=$port")
+            launched.onExit().thenAccept { exited ->
+                if (process === launched) process = null
+                appendBackendLog("内置后端已退出 code=${runCatching { exited.exitValue() }.getOrDefault(-1)}")
+            }
+        }.onFailure { error ->
+            process = null
+            appendBackendLog("启动内置后端失败：${error.javaClass.simpleName}: ${error.message.orEmpty()}")
+        }
     }
 
     @Synchronized
@@ -298,6 +335,31 @@ internal class BundledBackendController {
         return ProcessHandle.current().info().command().orElse("")
             .takeIf { it.isNotBlank() && File(it).isFile }
             ?.let { File(it).absolutePath }
+    }
+
+    private fun backendLogFile(): File = File(
+        File(MonitorInstallation.configFile().parentFile, "logs"),
+        "backend.log",
+    ).also { log ->
+        runCatching {
+            log.parentFile.mkdirs()
+            if (log.isFile && log.length() > 4L * 1024L * 1024L) {
+                Files.deleteIfExists(log.toPath())
+            }
+        }
+    }
+
+    private fun appendBackendLog(message: String) {
+        runCatching {
+            val log = backendLogFile()
+            Files.writeString(
+                log.toPath(),
+                "${Instant.now()} $message\n",
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND,
+            )
+        }
     }
 
     private fun isPortOpen(port: Int): Boolean = runCatching {

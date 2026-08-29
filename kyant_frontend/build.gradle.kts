@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "local.gpu.monitor"
-version = "1.0.0"
+version = "1.0.1"
 
 kotlin {
     jvmToolchain(21)
@@ -38,7 +38,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "Xerver"
-            packageVersion = "1.0.0"
+            packageVersion = "1.0.1"
             appResourcesRootDir.set(project.layout.projectDirectory.dir("appResources"))
             windows {
                 shortcut = true
@@ -49,4 +49,21 @@ compose.desktop {
             }
         }
     }
+}
+
+val verifyBundledBackend = tasks.register("verifyBundledBackend") {
+    val bundledBackend = layout.projectDirectory.file("appResources/backend/gpu-monitor-backend.exe")
+    doLast {
+        if (!bundledBackend.asFile.isFile) {
+            throw GradleException(
+                "Bundled backend is missing. Run .\\tools\\build_backend.ps1 from the repository root before packaging."
+            )
+        }
+    }
+}
+
+tasks.matching {
+    it.name in setOf("packageExe", "packageMsi", "packageDistributionForCurrentOS")
+}.configureEach {
+    dependsOn(verifyBundledBackend)
 }

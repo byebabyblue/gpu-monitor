@@ -8,6 +8,7 @@ class TrayLightweightSettingsTest {
         val ui = UiSettings()
 
         assertFalse(ui.trayLightweightEnabled)
+        assertFalse(ui.startMinimizedToTray)
         assertEquals(DefaultTrayLightweightDelayMinutes, ui.trayLightweightDelayMinutes)
     }
 
