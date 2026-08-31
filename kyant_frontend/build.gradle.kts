@@ -52,7 +52,8 @@ compose.desktop {
 }
 
 val verifyBundledBackend = tasks.register("verifyBundledBackend") {
-    val bundledBackend = layout.projectDirectory.file("appResources/backend/gpu-monitor-backend.exe")
+    val bundledBackend = layout.projectDirectory.file("appResources/common/backend/gpu-monitor-backend.exe")
+    inputs.file(bundledBackend)
     doLast {
         if (!bundledBackend.asFile.isFile) {
             throw GradleException(
@@ -62,8 +63,23 @@ val verifyBundledBackend = tasks.register("verifyBundledBackend") {
     }
 }
 
+val verifyPreparedBackend = tasks.register("verifyPreparedBackend") {
+    dependsOn("prepareAppResources")
+    val preparedBackend = layout.buildDirectory.file(
+        "compose/tmp/prepareAppResources/backend/gpu-monitor-backend.exe",
+    )
+    doLast {
+        if (!preparedBackend.get().asFile.isFile) {
+            throw GradleException(
+                "Bundled backend was not copied into the Compose application resources. " +
+                    "Put it under appResources/common/backend or a platform-specific appResources directory."
+            )
+        }
+    }
+}
+
 tasks.matching {
     it.name in setOf("packageExe", "packageMsi", "packageDistributionForCurrentOS")
 }.configureEach {
-    dependsOn(verifyBundledBackend)
+    dependsOn(verifyBundledBackend, verifyPreparedBackend)
 }

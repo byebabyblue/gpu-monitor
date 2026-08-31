@@ -8,7 +8,7 @@ $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $spec = Join-Path $root 'gpu-monitor-backend.spec'
 $distPath = Join-Path $root 'work\pyinstaller-dist'
 $buildPath = Join-Path $root 'work\pyinstaller-build'
-$target = Join-Path $root 'kyant_frontend\appResources\backend\gpu-monitor-backend.exe'
+$target = Join-Path $root 'kyant_frontend\appResources\common\backend\gpu-monitor-backend.exe'
 
 if (-not (Test-Path -LiteralPath $spec -PathType Leaf)) {
     throw "PyInstaller spec not found: $spec"
