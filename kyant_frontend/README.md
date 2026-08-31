@@ -39,13 +39,45 @@ The Settings page includes `开机最小化到托盘`. When enabled together wit
 tray icon to open it. The tray menu is a native Windows menu with an explicit
 CJK-capable font, so Chinese labels do not depend on the Compose menu renderer.
 
-If the startup screen cannot reach the local backend, it now falls back to the
+If the startup screen cannot reach the local backend, it falls back to the
 offline dashboard after a short timeout and lets the status pill retry the
-backend. Backend startup output is kept at
-`%APPDATA%\Xerver\logs\backend.log`, which makes it possible to distinguish
-a missing/quarantined executable from a configuration or runtime error. The
-PyInstaller spec leaves the backend uncompressed to reduce false positives from
-security software.
+backend. All backend launch stages (including config/log preparation) are guarded
+so a missing or blocked backend does not close the frontend. Backend stdin uses a
+closed pipe: Java's `Redirect.DISCARD` is output-only and must not be used for input.
+
+Settings includes **错误日志 / 打开日志文件夹**. Logs are local-only:
+
+- `%APPDATA%\Xerver\logs\frontend.log`: runtime details, backend launch errors,
+  child exit codes, API readiness and uncaught frontend exceptions.
+- `%APPDATA%\Xerver\logs\backend.log`: backend startup milestones, local API
+  binding, Python/thread exceptions, native fault traces and windowed stdout/stderr.
+  An early PyInstaller hook installs logging before Qt/dependency runtime hooks.
+- A custom `GPU_MONITOR_CONFIG_PATH` places logs beside that config instead.
+- If the normal directory is unwritable, logging falls back to
+  `%TEMP%\Xerver\logs`. Logs over 4 MiB retain one `.previous.log` copy;
+  backend rotation occurs only before launching a new child.
+
+Configuration contents, passwords and API request bodies are not written by the
+frontend diagnostics or uploaded automatically. Do not include `config.json`
+when sharing error logs. The installer is currently unsigned; no build change
+can guarantee that every antivirus will accept it.
+
+## Verify a packaged Windows build
+
+Run `gradlew.bat test createDistributable` first, then from the repository root:
+
+```powershell
+.\tools\test_windows_package.ps1 `
+  -AppImage .\kyant_frontend\build\compose\binaries\main\app\Xerver `
+  -OutputDirectory .\work\package-tests
+```
+
+This launches the native executable with its bundled JVM and backend, a fresh
+empty config, and an unused loopback port. It checks both API responses and
+frontend readiness logs before passing, then terminates only its own process tree.
+Use `-KeepRunning` for manual window checks. Before publishing, also run this
+check against the final installer's extracted application image, not just the
+intermediate build directory.
 
 Selected wallpapers are copied to `%LOCALAPPDATA%\Xerver\wallpapers`.
 The untouched source is kept under `original`, while the UI loads a downscaled

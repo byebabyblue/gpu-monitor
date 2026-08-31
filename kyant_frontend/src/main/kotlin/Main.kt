@@ -403,8 +403,24 @@ private fun NativeSystemTray(
 }
 
 fun main() {
+    StartupDiagnostics.installUncaughtExceptionLogging()
+    try {
+        StartupDiagnostics.logStartupSnapshot()
+        runMonitorApplication()
+    } catch (error: Throwable) {
+        // jpackage invokes main through JNI: log here as well as in the default
+        // uncaught handler, before its native launcher shows a generic error.
+        StartupDiagnostics.logException("前端启动或运行失败", error)
+        throw error
+    }
+}
+
+private fun runMonitorApplication() {
     val bundledBackend = BundledBackendController()
-    MonitorInstallation.ensureConfigFile()
+    Runtime.getRuntime().addShutdownHook(Thread({ bundledBackend.stop() }, "xerver-backend-shutdown"))
+    runCatching { MonitorInstallation.ensureConfigFile() }.onFailure {
+        StartupDiagnostics.logException("初始化配置失败，将进入离线界面", it)
+    }
     val launchBounds = MonitorInstallation.launchWindowBounds()
     application {
         val appIcon = painterResource("app-icon.png")
@@ -463,6 +479,7 @@ fun main() {
         }
 
         LaunchedEffect(Unit) {
+            StartupDiagnostics.log("Compose application 已初始化")
             withContext(Dispatchers.IO) { bundledBackend.startIfAvailable() }
         }
 
@@ -488,6 +505,7 @@ fun main() {
                 visible = windowVisible,
             ) {
             LaunchedEffect(window) {
+                StartupDiagnostics.log("主窗口已创建")
                 awtWindow = window
                 window.minimumSize = Dimension(
                     minOf(760, launchBounds.width),
@@ -532,6 +550,7 @@ fun main() {
                         trayLightweightDelayMinutes = normalizeTrayLightweightDelayMinutes(delayMinutes)
                     },
                     onBackendRetry = {
+                        StartupDiagnostics.log("用户点击后端重试")
                         backendScope.launch(Dispatchers.IO) {
                             bundledBackend.startIfAvailable()
                         }

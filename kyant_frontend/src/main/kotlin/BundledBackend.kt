@@ -10,8 +10,6 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.nio.file.StandardOpenOption
-import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 internal data class MonitorWindowBounds(
@@ -261,56 +259,68 @@ internal object MonitorInstallation {
     private fun Boolean?.orFalse(): Boolean = this ?: false
 }
 
-internal class BundledBackendController {
+internal class BundledBackendController(
+    private val launchProcess: (ProcessBuilder) -> Process = { it.start() },
+) {
     @Volatile
     private var process: Process? = null
 
     @Synchronized
     fun startIfAvailable() {
         if (process?.isAlive == true) return
-        val port = MonitorClient.initialPort()
-        if (isPortOpen(port)) return
-
-        val resources = System.getProperty("compose.application.resources.dir")
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::File)
-        if (resources == null) {
-            appendBackendLog("未找到应用资源目录，无法启动内置后端")
-            return
-        }
-        val backend = File(resources, "backend/gpu-monitor-backend.exe")
-        if (!backend.isFile) {
-            appendBackendLog("未找到内置后端：${backend.absolutePath}")
-            return
-        }
-
-        val config = MonitorInstallation.ensureConfigFile()
-        val logFile = backendLogFile()
-        val builder = ProcessBuilder(
-            backend.absolutePath,
-            "--backend-only",
-            "--api-port",
-            port.toString(),
-            "--config",
-            config.absolutePath,
-        )
-            .directory(config.parentFile)
-            .redirectInput(ProcessBuilder.Redirect.DISCARD)
-            .redirectErrorStream(true)
-            .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
-
-        packagedFrontendPath()?.let { builder.environment()["GPU_MONITOR_FRONTEND_EXE"] = it }
+        // Configuration, log setup and ProcessBuilder validation can all throw
+        // before start(). Keep every startup stage inside the recovery boundary.
         runCatching {
-            val launched = builder.start()
+            val port = MonitorClient.initialPort()
+            StartupDiagnostics.log("内置后端启动检查 port=$port")
+            if (isPortOpen(port)) {
+                StartupDiagnostics.log("本地端口已打开，不重复启动后端 port=$port")
+                return
+            }
+
+            val resources = System.getProperty("compose.application.resources.dir")
+                ?.takeIf { it.isNotBlank() }
+                ?.let(::File)
+            checkNotNull(resources) { "未找到应用资源目录，无法启动内置后端" }
+            val backend = File(resources, "backend/gpu-monitor-backend.exe")
+            check(backend.isFile) { "未找到内置后端：${backend.absolutePath}" }
+
+            val config = MonitorInstallation.ensureConfigFile()
+            val logFile = StartupDiagnostics.prepareBackendLog()
+            StartupDiagnostics.log(
+                "准备启动内置后端 path=${backend.absolutePath} bytes=${backend.length()} " +
+                    "config=${config.absolutePath} backendLog=${logFile.absolutePath}",
+            )
+            val builder = ProcessBuilder(
+                backend.absolutePath,
+                "--backend-only",
+                "--api-port",
+                port.toString(),
+                "--config",
+                config.absolutePath,
+            )
+                .directory(config.parentFile)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+            builder.environment()["PYTHONUNBUFFERED"] = "1"
+            packagedFrontendPath()?.let { builder.environment()["GPU_MONITOR_FRONTEND_EXE"] = it }
+
+            val launched = launchProcess(builder)
             process = launched
-            appendBackendLog("已启动内置后端 pid=${launched.pid()} port=$port")
+            // DISCARD is output-only. The default stdin pipe must instead be
+            // closed after launch so the non-interactive backend receives EOF.
+            runCatching { launched.outputStream.close() }.onFailure {
+                StartupDiagnostics.logException("关闭后端标准输入失败", it)
+            }
+            StartupDiagnostics.log("已启动内置后端 pid=${launched.pid()} port=$port")
             launched.onExit().thenAccept { exited ->
                 if (process === launched) process = null
-                appendBackendLog("内置后端已退出 code=${runCatching { exited.exitValue() }.getOrDefault(-1)}")
+                StartupDiagnostics.log(
+                    "内置后端已退出 code=${runCatching { exited.exitValue() }.getOrDefault(-1)}",
+                )
             }
         }.onFailure { error ->
-            process = null
-            appendBackendLog("启动内置后端失败：${error.javaClass.simpleName}: ${error.message.orEmpty()}")
+            StartupDiagnostics.logException("启动内置后端失败，界面仍可使用并重试", error)
         }
     }
 
@@ -335,31 +345,6 @@ internal class BundledBackendController {
         return ProcessHandle.current().info().command().orElse("")
             .takeIf { it.isNotBlank() && File(it).isFile }
             ?.let { File(it).absolutePath }
-    }
-
-    private fun backendLogFile(): File = File(
-        File(MonitorInstallation.configFile().parentFile, "logs"),
-        "backend.log",
-    ).also { log ->
-        runCatching {
-            log.parentFile.mkdirs()
-            if (log.isFile && log.length() > 4L * 1024L * 1024L) {
-                Files.deleteIfExists(log.toPath())
-            }
-        }
-    }
-
-    private fun appendBackendLog(message: String) {
-        runCatching {
-            val log = backendLogFile()
-            Files.writeString(
-                log.toPath(),
-                "${Instant.now()} $message\n",
-                StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.APPEND,
-            )
-        }
     }
 
     private fun isPortOpen(port: Int): Boolean = runCatching {

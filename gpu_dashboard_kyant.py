@@ -31,6 +31,11 @@ Config (config.json):
     }
 """
 
+from backend_diagnostics import install_backend_diagnostics, logger as backend_logger
+
+if __name__ == "__main__":
+    install_backend_diagnostics()
+
 import sys
 import json
 import copy
@@ -4070,9 +4075,11 @@ class Dashboard(QMainWindow):
             )
             server.daemon_threads = True
             self._api_server = server
+            backend_logger.info("Local API listening on 127.0.0.1:%s", self._api_port)
             server.serve_forever(poll_interval=0.25)
         except OSError:
             self._api_server = None
+            backend_logger.exception("Local API failed to listen on 127.0.0.1:%s", self._api_port)
 
     def _server_to_dict(self, info):
         def task_to_dict(task):
@@ -4370,6 +4377,7 @@ def main():
     ap.add_argument("--backend-only", action="store_true",
                     help="Run the copied monitor as a hidden data backend")
     args = ap.parse_args()
+    backend_logger.info("Backend initialization backend_only=%s api_port=%s", args.backend_only, args.api_port)
 
     # ── HiDPI scaling (must be set BEFORE QApplication) ───────────────
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
@@ -4394,6 +4402,7 @@ def main():
     app.setStyleSheet(_GLOBAL_CSS)
 
     win = Dashboard(args.config, demo=args.demo, api_port=args.api_port)
+    backend_logger.info("Dashboard initialized; entering Qt event loop")
     if not args.backend_only:
         win.show()
 
@@ -4401,6 +4410,8 @@ def main():
         sys.exit(app.exec_())
     except KeyboardInterrupt:
         pass
+    finally:
+        backend_logger.info("Backend event loop exited")
 
 
 if __name__ == "__main__":

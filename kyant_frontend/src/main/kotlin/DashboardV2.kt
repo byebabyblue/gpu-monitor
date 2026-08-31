@@ -38,6 +38,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Memory
@@ -260,6 +261,7 @@ internal fun GpuMonitorDashboardV2(
             )
         ) {
             startupFinished = true
+            StartupDiagnostics.log("主界面已就绪 backendAvailable=$configAvailable")
         }
     }
 
@@ -274,8 +276,11 @@ internal fun GpuMonitorDashboardV2(
             if (fresh == null) {
                 if (System.nanoTime() >= deadline) {
                     configLoaded = true
-                    startupError = "后端未响应，可能被安全软件隔离；点击右上角状态重试"
+                    startupError = "后端未响应；可在设置中打开日志，或点击右上角状态重试"
                     apiMessage = "后端未连接 · 点击重试"
+                    result.exceptionOrNull()?.let {
+                        StartupDiagnostics.logException("等待后端配置超时 port=$apiPort", it)
+                    }
                     break
                 }
                 delay(650)
@@ -304,6 +309,7 @@ internal fun GpuMonitorDashboardV2(
             config = loaded
             configAvailable = true
             startupError = ""
+            StartupDiagnostics.log("后端配置读取成功 port=$apiPort")
             if (!defaultPageApplied) {
                 selectedTab = V2Tab.fromKey(loaded.ui.defaultPage)
                 defaultPageApplied = true
@@ -331,7 +337,7 @@ internal fun GpuMonitorDashboardV2(
                 }
                 .onFailure { error ->
                     apiOnline = false
-                    apiMessage = "后端未连接 · :$apiPort"
+                    apiMessage = "后端未连接 · 127.0.0.1:$apiPort"
                     if (servers.isEmpty()) selectedServerName = null
                     if (error.message?.isNotBlank() == true) settingsMessage = settingsMessage.ifBlank { "无法连接后端" }
                 }
@@ -1743,6 +1749,7 @@ private fun V2SettingsPage(
         mutableIntStateOf(normalizeTrayLightweightDelayOption(config.ui.trayLightweightDelayMinutes))
     }
     var draft by remember { mutableStateOf(ServerDraft()) }
+    var diagnosticsMessage by remember { mutableStateOf("") }
 
     LaunchedEffect(configGeneration) {
         wallpaper = config.ui.wallpaperPath
@@ -2153,6 +2160,29 @@ private fun V2SettingsPage(
                     color = if (serverActionMessage.startsWith("删除失败")) V2Red else V2Green,
                     fontSize = 11.sp,
                 )
+            }
+        }
+
+        V2SettingsSection(
+            backdrop,
+            "DIAGNOSTICS",
+            "错误日志",
+            Icons.Rounded.FolderOpen,
+            Modifier.fillMaxWidth(),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("frontend.log · 界面与启动错误    backend.log · 后端运行输出", color = V2Text, fontSize = 11.sp)
+                    Text(StartupDiagnostics.logDirectory().absolutePath, color = V2Muted, fontSize = 10.sp)
+                }
+                V2ActionButton("打开日志文件夹", Icons.Rounded.FolderOpen, false) {
+                    StartupDiagnostics.openLogDirectory()
+                        .onSuccess { diagnosticsMessage = "日志仅保存在本机，不会自动上传。" }
+                        .onFailure { diagnosticsMessage = "无法打开日志文件夹：${it.message.orEmpty()}" }
+                }
+            }
+            if (diagnosticsMessage.isNotBlank()) {
+                Text(diagnosticsMessage, color = V2Muted, fontSize = 10.sp)
             }
         }
 

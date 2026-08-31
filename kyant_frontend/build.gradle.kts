@@ -81,5 +81,5 @@ val verifyPreparedBackend = tasks.register("verifyPreparedBackend") {
 tasks.matching {
     it.name in setOf("packageExe", "packageMsi", "packageDistributionForCurrentOS")
 }.configureEach {
-    dependsOn(verifyBundledBackend, verifyPreparedBackend)
+    dependsOn("test", verifyBundledBackend, verifyPreparedBackend)
 }
