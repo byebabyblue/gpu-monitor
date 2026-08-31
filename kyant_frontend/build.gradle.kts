@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "local.gpu.monitor"
-version = "1.0.2-test.1"
+version = "1.1.0"
 
 kotlin {
     jvmToolchain(21)
@@ -38,9 +38,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "Xerver"
-            // Windows Installer uses numeric versions; the UI identifies this
-            // local verification build as 1.0.2-test.1. It is not a Release.
-            packageVersion = "1.0.2"
+            packageVersion = "1.1.0"
             appResourcesRootDir.set(project.layout.projectDirectory.dir("appResources"))
             windows {
                 shortcut = true

@@ -260,6 +260,7 @@ internal object MonitorInstallation {
 }
 
 internal class BundledBackendController(
+    private val portProvider: () -> Int = MonitorClient::initialPort,
     private val launchProcess: (ProcessBuilder) -> Process = { it.start() },
 ) {
     @Volatile
@@ -271,7 +272,7 @@ internal class BundledBackendController(
         // Configuration, log setup and ProcessBuilder validation can all throw
         // before start(). Keep every startup stage inside the recovery boundary.
         runCatching {
-            val port = MonitorClient.initialPort()
+            val port = portProvider()
             StartupDiagnostics.log("内置后端启动检查 port=$port")
             if (isPortOpen(port)) {
                 StartupDiagnostics.log("本地端口已打开，不重复启动后端 port=$port")

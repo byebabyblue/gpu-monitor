@@ -44,9 +44,8 @@ The application and installer use `src/main/resources/app-icon.png` and
 `https://github.com/byebabyblue/gpu-monitor/releases` in Settings. The check
 only reads public GitHub release metadata; it does not upload local settings.
 
-The current prerelease build is `1.0.2-test.1` (numeric MSI version `1.0.2`).
-Building it does not publish a GitHub Release. See the
-[prerelease notes](../docs/releases/v1.0.2-test.1.md) for verification details.
+The current release build is `1.1.0`. See the
+[release notes](../docs/releases/v1.1.0.md) for verification details.
 
 The Settings page includes `开机最小化到托盘`. When enabled together with
 `开机自启动`, Windows starts Xerver without showing the main window; use the

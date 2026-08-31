@@ -68,13 +68,17 @@ class BundledBackendStartupTest {
 
     @Test
     fun setupFailureBeforeProcessBuilderUsesFallbackLogAndDoesNotCrash() = withInstallation { root ->
+        val isolatedPort = ServerSocket(0).use { it.localPort }
         root.resolve("Xerver").deleteRecursively()
         root.resolve("Xerver").writeText("This file deliberately blocks creation of the config directory.")
         var launched = false
-        BundledBackendController {
-            launched = true
-            error("Configuration setup should fail first")
-        }.startIfAvailable()
+        BundledBackendController(
+            launchProcess = {
+                launched = true
+                error("Configuration setup should fail first")
+            },
+            portProvider = { isolatedPort },
+        ).startIfAvailable()
         assertFalse(launched)
         val log = root.resolve("temp/Xerver/logs/frontend.log").readText()
         assertTrue(log.contains("启动内置后端失败"))
