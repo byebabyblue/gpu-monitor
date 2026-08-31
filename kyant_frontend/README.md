@@ -19,9 +19,19 @@ Then build the installer from this folder:
 pwsh -NoProfile -Command "$env:JAVA_HOME='C:\\Path\\To\\JDK-21'; .\gradlew.bat packageExe"
 ```
 
-The staging script uses `gpu-monitor-backend.spec`, which intentionally keeps
-UPX compression disabled. This avoids the extra self-unpacking/compression
-layer that commonly causes unsigned monitoring backends to be quarantined.
+The staging script uses `gpu-monitor-backend.spec` in **onedir** mode, with
+UPX disabled. Python, Qt and other native dependencies are installed under
+`app/resources/backend/_internal`; the backend no longer unpacks its runtime
+into a new temporary directory on every launch. The download remains a single
+installer containing the complete frontend and backend. Users do not need a
+separate Python installation.
+
+The entire backend directory is staged together, with a SHA-256 manifest.
+`tools/verify_backend_bundle.ps1` checks every file, the Python runtime and Qt
+platform plugin. Packaging verifies both the source bundle and the resources
+prepared by Compose. Missing, changed or unexpected dependencies stop the build.
+Previous staging output is preserved under `work/pyinstaller-previous`, outside
+application resources. Never redistribute just `gpu-monitor-backend.exe`.
 
 The generated EXE installer includes the frontend runtime and the bundled
 backend. An installed copy stores its machine-specific configuration under
@@ -30,14 +40,30 @@ backend. An installed copy stores its machine-specific configuration under
 the user's servers and preferences.
 
 The application and installer use `src/main/resources/app-icon.png` and
-`app-icon.ico`. Version `1.0.1` can check the latest published release from
+`app-icon.ico`. Settings can check the latest published release from
 `https://github.com/byebabyblue/gpu-monitor/releases` in Settings. The check
 only reads public GitHub release metadata; it does not upload local settings.
 
+The current prerelease build is `1.0.2-test.1` (numeric MSI version `1.0.2`).
+Building it does not publish a GitHub Release. See the
+[prerelease notes](../docs/releases/v1.0.2-test.1.md) for verification details.
+
 The Settings page includes `开机最小化到托盘`. When enabled together with
 `开机自启动`, Windows starts Xerver without showing the main window; use the
-tray icon to open it. The tray menu is a native Windows menu with an explicit
-CJK-capable font, so Chinese labels do not depend on the Compose menu renderer.
+tray icon to open it. The tray icon uses the system tray, while its context menu
+uses Swing's Unicode text rendering instead of AWT's native `MenuItem` font peer.
+Font selection uses locale-independent family names and checks actual Chinese
+glyph coverage. A machine without any usable CJK font receives readable English
+labels instead of squares. The menu works with the main window hidden, stays
+within the monitor work area, and closes on selection, Escape or focus loss.
+
+Normal startup never registers or repairs Windows startup entries. Only an
+explicit change to the `开机自启动` setting may update them; saving other settings
+does not rewrite the entry. The update checks the existing registry value first
+and avoids writes when it already matches. Installed copies register `Xerver.exe`
+directly; the PowerShell launcher fallback is only for source-based installations.
+If an external tool removes the startup entry, Xerver does not silently recreate
+it. The user can turn the setting off and on to request registration again.
 
 If the startup screen cannot reach the local backend, it falls back to the
 offline dashboard after a short timeout and lets the status pill retry the
@@ -78,6 +104,13 @@ frontend readiness logs before passing, then terminates only its own process tre
 Use `-KeepRunning` for manual window checks. Before publishing, also run this
 check against the final installer's extracted application image, not just the
 intermediate build directory.
+
+Repeat with `-AutostartEnabled` to cover an existing enabled preference. Both
+cases use empty server lists, save an unrelated setting, verify the backend
+runtime is loaded from `_internal`, and compare startup entries before/after.
+The test never enables/disables real startup entries or modifies antivirus
+settings. Run `python -m unittest discover -s tests -v` for the backend regression
+tests; startup toggling itself is tested with an in-memory registry.
 
 Selected wallpapers are copied to `%LOCALAPPDATA%\Xerver\wallpapers`.
 The untouched source is kept under `original`, while the UI loads a downscaled

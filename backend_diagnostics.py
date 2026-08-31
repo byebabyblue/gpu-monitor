@@ -83,3 +83,4 @@ def install_backend_diagnostics():
         "Backend process started pid=%s python=%s frozen=%s executable=%s",
         os.getpid(), sys.version.split()[0], bool(getattr(sys, "frozen", False)), sys.executable,
     )
+    logger.info("Backend runtime directory=%s", getattr(sys, "_MEIPASS", "source"))

@@ -42,16 +42,14 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="gpu-monitor-backend",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    # UPX-compressed PyInstaller one-file executables are more likely to be
-    # quarantined by endpoint security products.  Keep the backend uncompressed
-    # so the packaged installer is easier to trust and diagnose.
+    # Runtime libraries are installed alongside the executable, not extracted
+    # into a new temporary directory on every launch. Keep UPX disabled too.
     upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
@@ -61,4 +59,15 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    contents_directory="_internal",
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="gpu-monitor-backend",
 )

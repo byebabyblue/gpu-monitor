@@ -27,9 +27,12 @@ __pycache__/
 
 # Build output and packaged binaries
 .gradle/
+.kotlin/
 **/build/
 dist/
 work/pyinstaller-*/
+work/onedir-package-tests/
+kyant_frontend/appResources/common/backend/
 GPU-Monitor-Kyant-Portable/backend/
 GPU-Monitor-Kyant-Portable/frontend/
 *.exe

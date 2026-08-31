@@ -70,10 +70,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.Dimension
 import java.awt.EventQueue
-import java.awt.Font
 import java.awt.GraphicsEnvironment
-import java.awt.MenuItem
-import java.awt.PopupMenu
+import java.awt.MouseInfo
 import java.awt.Rectangle
 import java.awt.SystemTray
 import java.awt.TrayIcon
@@ -315,24 +313,7 @@ private fun showcaseServer(): ServerSnapshot {
 private fun withShowcaseServer(servers: List<ServerSnapshot>): List<ServerSnapshot> =
     listOf(showcaseServer()) + servers.filterNot { it.status == "showcase" }
 
-private const val TrayOpenLabel = "\u6253\u5F00 Xerver"
-private const val TrayExitLabel = "\u9000\u51FA Xerver"
-
 private object TrayResources
-
-private fun trayMenuFont(): Font {
-    val available = runCatching {
-        GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toSet()
-    }.getOrDefault(emptySet())
-    val family = listOf(
-        "Microsoft YaHei UI",
-        "Microsoft YaHei",
-        "SimSun",
-        "Noto Sans CJK SC",
-        "Dialog",
-    ).firstOrNull { it in available } ?: "Dialog"
-    return Font(family, Font.PLAIN, 12)
-}
 
 @Composable
 private fun NativeSystemTray(
@@ -356,24 +337,39 @@ private fun NativeSystemTray(
             return@DisposableEffect onDispose { }
         }
 
-        val trayMenuFont = trayMenuFont()
-        val popup = PopupMenu().apply { this.font = trayMenuFont }
-        val openItem = MenuItem(TrayOpenLabel).apply {
-            this.font = trayMenuFont
-            addActionListener { latestOnOpen.value.invoke() }
+        val popup = runCatching {
+            onAwtEventThread {
+                TrayContextMenu(
+                    onOpen = { latestOnOpen.value.invoke() },
+                    onExit = { latestOnExit.value.invoke() },
+                )
+            }
+        }.getOrElse {
+            StartupDiagnostics.logException("托盘菜单初始化失败", it)
+            latestOnUnavailable.value.invoke()
+            return@DisposableEffect onDispose { }
         }
-        val exitItem = MenuItem(TrayExitLabel).apply {
-            this.font = trayMenuFont
-            addActionListener { latestOnExit.value.invoke() }
-        }
-        popup.add(openItem)
-        popup.addSeparator()
-        popup.add(exitItem)
+        StartupDiagnostics.log("托盘菜单已初始化 renderer=Swing font=${popup.fontName} chinese=${popup.chineseSupported}")
 
-        val icon = TrayIcon(image, "Xerver", popup).apply {
+        val icon = TrayIcon(image, "Xerver").apply {
             isImageAutoSize = true
         }
         val mouseListener = object : MouseAdapter() {
+            private fun showPopup(event: MouseEvent) {
+                val pointer = runCatching { MouseInfo.getPointerInfo()?.location }.getOrNull() ?: event.point
+                runCatching { popup.show(pointer) }.onFailure {
+                    StartupDiagnostics.logException("打开托盘菜单失败", it)
+                }
+            }
+
+            override fun mousePressed(event: MouseEvent) {
+                if (event.isPopupTrigger) showPopup(event)
+            }
+
+            override fun mouseReleased(event: MouseEvent) {
+                if (event.isPopupTrigger || event.button == MouseEvent.BUTTON3) showPopup(event)
+            }
+
             override fun mouseClicked(event: MouseEvent) {
                 if (event.button == MouseEvent.BUTTON1 && event.clickCount == 1) {
                     latestOnOpen.value.invoke()
@@ -383,8 +379,10 @@ private fun NativeSystemTray(
         icon.addMouseListener(mouseListener)
         try {
             tray.add(icon)
-        } catch (_: Exception) {
+        } catch (error: Exception) {
             icon.removeMouseListener(mouseListener)
+            onAwtEventThread { popup.close() }
+            StartupDiagnostics.logException("系统托盘图标初始化失败", error)
             latestOnUnavailable.value.invoke()
             return@DisposableEffect onDispose { }
         }
@@ -393,6 +391,7 @@ private fun NativeSystemTray(
         onDispose {
             icon.removeMouseListener(mouseListener)
             tray.remove(icon)
+            onAwtEventThread { popup.close() }
             trayIconState.value = null
         }
     }

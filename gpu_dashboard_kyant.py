@@ -32,6 +32,7 @@ Config (config.json):
 """
 
 from backend_diagnostics import install_backend_diagnostics, logger as backend_logger
+from windows_autostart import update_autostart
 
 if __name__ == "__main__":
     install_backend_diagnostics()
@@ -1879,12 +1880,9 @@ class Dashboard(QMainWindow):
             self._cfg_path = str(cfg_path)
             self._known_hosts_path = cfg_path.absolute().with_name("ssh_known_hosts")
 
-            startup_ui = self._cfg.get("ui", {})
-            if isinstance(startup_ui, dict) and bool(startup_ui.get("autostart", False)):
-                try:
-                    self._set_autostart(True)
-                except (OSError, ValueError):
-                    pass
+            # Startup only reads preferences. Registering or repairing startup
+            # entries requires an explicit change to the Settings toggle.
+            backend_logger.info("Startup preferences loaded; autostart registry unchanged")
 
         self._interval = self._cfg.get("refresh_interval", 3)
         RefreshSettings._config_path = str(cfg_path) if not demo else None
@@ -3670,6 +3668,8 @@ class Dashboard(QMainWindow):
         ui = self._cfg.get("ui", {})
         if not isinstance(ui, dict):
             ui = {}
+        ui = dict(ui)
+        autostart_change = None
         if "wallpaper_path" in ui_payload:
             ui["wallpaper_path"] = str(ui_payload.get("wallpaper_path", "") or "")
         if "default_page" in ui_payload:
@@ -3679,7 +3679,8 @@ class Dashboard(QMainWindow):
             ui["default_page"] = page
         if "autostart" in ui_payload:
             enabled = bool(ui_payload["autostart"])
-            self._set_autostart(enabled)
+            if enabled != bool(ui.get("autostart", False)):
+                autostart_change = enabled
             ui["autostart"] = enabled
         if "start_minimized_to_tray" in ui_payload:
             ui["start_minimized_to_tray"] = bool(ui_payload["start_minimized_to_tray"])
@@ -3777,6 +3778,10 @@ class Dashboard(QMainWindow):
             if not 0.90 <= font_scale <= 1.35:
                 raise ValueError("Font scale must be between 0.90 and 1.35")
             ui["font_scale"] = round(font_scale, 2)
+        # Validate the entire UI payload first. Saving an unrelated setting or
+        # rejecting an invalid request must not modify Windows startup entries.
+        if autostart_change is not None:
+            self._set_autostart(autostart_change)
         self._cfg["ui"] = ui
         if not self._save_config():
             raise OSError("Unable to save configuration")
@@ -3787,48 +3792,12 @@ class Dashboard(QMainWindow):
         }
 
     def _set_autostart(self, enabled):
-        if sys.platform != "win32":
-            return
-        import winreg
-
-        value_name = "Xerver"
-        legacy_value_name = "GPU Monitor"
-        run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        root = Path(self._cfg_path).resolve().parent
-        launcher = root / "start_gpu_monitor.ps1"
-        packaged_frontend = str(
-            os.environ.get("GPU_MONITOR_FRONTEND_EXE", "") or ""
-        ).strip()
-        frontend_path = (
-            Path(packaged_frontend).expanduser().resolve()
-            if packaged_frontend else None
+        changed = update_autostart(
+            enabled,
+            self._cfg_path,
+            str(os.environ.get("GPU_MONITOR_FRONTEND_EXE", "") or "").strip(),
         )
-        if enabled and not launcher.exists() and not (
-            frontend_path and frontend_path.is_file()
-        ):
-            raise ValueError("Autostart launcher was not found")
-        with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE
-        ) as key:
-            if enabled:
-                if launcher.exists():
-                    command = (
-                        'powershell.exe -NoLogo -NoProfile -WindowStyle Hidden '
-                        f'-File "{launcher}"'
-                    )
-                else:
-                    command = f'"{frontend_path}"'
-                winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, command)
-                try:
-                    winreg.DeleteValue(key, legacy_value_name)
-                except FileNotFoundError:
-                    pass
-            else:
-                for obsolete_name in (value_name, legacy_value_name):
-                    try:
-                        winreg.DeleteValue(key, obsolete_name)
-                    except FileNotFoundError:
-                        pass
+        backend_logger.info("User changed autostart enabled=%s registry_changed=%s", enabled, changed)
 
     def _api_add_server(self, payload):
         name = str(payload.get("name", "")).strip()
@@ -4389,7 +4358,9 @@ def main():
     except AttributeError:
         pass  # older PyQt5 versions
 
+    backend_logger.info("Creating Qt application")
     app = QApplication(sys.argv)
+    backend_logger.info("Qt application initialized")
     app.setStyle("Fusion")
     if args.backend_only:
         # Keep the hidden API backend alive even though no dashboard window is shown.
@@ -4401,6 +4372,7 @@ def main():
 
     app.setStyleSheet(_GLOBAL_CSS)
 
+    backend_logger.info("Initializing dashboard and local API")
     win = Dashboard(args.config, demo=args.demo, api_port=args.api_port)
     backend_logger.info("Dashboard initialized; entering Qt event loop")
     if not args.backend_only:

@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "local.gpu.monitor"
-version = "1.0.1"
+version = "1.0.2-test.1"
 
 kotlin {
     jvmToolchain(21)
@@ -38,7 +38,9 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "Xerver"
-            packageVersion = "1.0.1"
+            // Windows Installer uses numeric versions; the UI identifies this
+            // local verification build as 1.0.2-test.1. It is not a Release.
+            packageVersion = "1.0.2"
             appResourcesRootDir.set(project.layout.projectDirectory.dir("appResources"))
             windows {
                 shortcut = true
@@ -51,35 +53,41 @@ compose.desktop {
     }
 }
 
-val verifyBundledBackend = tasks.register("verifyBundledBackend") {
-    val bundledBackend = layout.projectDirectory.file("appResources/common/backend/gpu-monitor-backend.exe")
-    inputs.file(bundledBackend)
-    doLast {
-        if (!bundledBackend.asFile.isFile) {
-            throw GradleException(
-                "Bundled backend is missing. Run .\\tools\\build_backend.ps1 from the repository root before packaging."
-            )
-        }
+fun verifyBackendDirectory(directory: File) {
+    val verifier = rootDir.parentFile.resolve("tools/verify_backend_bundle.ps1")
+    val shell = if (System.getProperty("os.name").startsWith("Windows")) "powershell.exe" else "pwsh"
+    val validation = providers.exec {
+        commandLine(shell, "-NoProfile", "-NonInteractive", "-File", verifier.absolutePath,
+            "-BackendDirectory", directory.absolutePath, "-Json")
+        isIgnoreExitValue = true
     }
+    val details = validation.standardOutput.asText.get() + validation.standardError.asText.get()
+    if (validation.result.get().exitValue != 0) {
+        throw GradleException("Incomplete or modified backend bundle. Rebuild with tools/build_backend.ps1.\n$details")
+    }
+    logger.lifecycle(details.trim())
+}
+
+val verifyBundledBackend = tasks.register("verifyBundledBackend") {
+    val bundledBackend = layout.projectDirectory.dir("appResources/common/backend")
+    inputs.dir(bundledBackend)
+    doLast { verifyBackendDirectory(bundledBackend.asFile) }
+}
+
+tasks.matching { it.name == "prepareAppResources" }.configureEach {
+    dependsOn(verifyBundledBackend)
 }
 
 val verifyPreparedBackend = tasks.register("verifyPreparedBackend") {
     dependsOn("prepareAppResources")
-    val preparedBackend = layout.buildDirectory.file(
-        "compose/tmp/prepareAppResources/backend/gpu-monitor-backend.exe",
+    val preparedBackend = layout.buildDirectory.dir(
+        "compose/tmp/prepareAppResources/backend",
     )
-    doLast {
-        if (!preparedBackend.get().asFile.isFile) {
-            throw GradleException(
-                "Bundled backend was not copied into the Compose application resources. " +
-                    "Put it under appResources/common/backend or a platform-specific appResources directory."
-            )
-        }
-    }
+    doLast { verifyBackendDirectory(preparedBackend.get().asFile) }
 }
 
 tasks.matching {
-    it.name in setOf("packageExe", "packageMsi", "packageDistributionForCurrentOS")
+    it.name in setOf("createDistributable", "packageExe", "packageMsi", "packageDistributionForCurrentOS")
 }.configureEach {
     dependsOn("test", verifyBundledBackend, verifyPreparedBackend)
 }
