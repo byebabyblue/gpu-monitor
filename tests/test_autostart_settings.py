@@ -12,6 +12,18 @@ from gpu_dashboard_kyant import Dashboard, RefreshSettings
 
 
 class AutostartSettingsTest(unittest.TestCase):
+    def test_update_interval_accepts_only_12_to_168_integer_hours(self):
+        for hours in (12, 24, 36, 168):
+            state = self.state(False)
+            Dashboard._api_update_settings(state, {"ui": {"update_check_interval_hours": hours}})
+            self.assertEqual(hours, state._cfg["ui"]["update_check_interval_hours"])
+        for hours in (0, 11, 169, True, 12.5, "24"):
+            with self.subTest(hours=hours):
+                state = self.state(False)
+                with self.assertRaises(ValueError):
+                    Dashboard._api_update_settings(state, {"ui": {"update_check_interval_hours": hours}})
+                state._save_config.assert_not_called()
+
     def state(self, enabled):
         return SimpleNamespace(
             _cfg={"settings": {}, "ui": {"autostart": enabled}},

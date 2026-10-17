@@ -3,7 +3,7 @@ import java.awt.Desktop
 import java.net.HttpURLConnection
 import java.net.URI
 
-internal const val GpuMonitorVersion = "1.2.0"
+internal const val GpuMonitorVersion = "1.2.1"
 internal const val GpuMonitorRepositoryUrl = "https://github.com/byebabyblue/gpu-monitor"
 internal const val GpuMonitorReleasesUrl = "$GpuMonitorRepositoryUrl/releases"
 
@@ -20,7 +20,38 @@ internal data class GpuMonitorRelease(
 )
 
 internal object UpdateChecker {
-    fun fetchLatest(): Result<GpuMonitorRelease> = runCatching {
+    fun fetchLatest(): Result<GpuMonitorRelease> = fetchLatestUsing(::fetchLatestApi, ::fetchLatestRedirect)
+
+    internal fun fetchLatestUsing(primary: () -> GpuMonitorRelease, fallback: () -> GpuMonitorRelease): Result<GpuMonitorRelease> =
+        runCatching(primary).recoverCatching { fallback() }
+
+    internal fun fetchLatestRedirect(): GpuMonitorRelease {
+        val connection = URI.create("$GpuMonitorReleasesUrl/latest").toURL().openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "HEAD"
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = 7_000
+            connection.readTimeout = 7_000
+            connection.setRequestProperty("User-Agent", "Xerver/$GpuMonitorVersion")
+            check(connection.responseCode in listOf(301, 302, 303, 307, 308)) { "更新服务暂不可用，请稍后重试" }
+            return releaseFromLatestLocation(connection.getHeaderField("Location").orEmpty())
+        } finally { connection.disconnect() }
+    }
+
+    internal fun releaseFromLatestLocation(location: String): GpuMonitorRelease {
+        val uri = URI.create("$GpuMonitorReleasesUrl/latest").resolve(location)
+        val prefix = "/byebabyblue/gpu-monitor/releases/tag/"
+        require(uri.scheme == "https" && uri.host == "github.com" && uri.userInfo == null &&
+            uri.port == -1 && uri.query == null && uri.fragment == null && uri.path.startsWith(prefix)) {
+            "更新服务返回了无效地址"
+        }
+        val tag = uri.path.removePrefix(prefix)
+        require(Regex("""[vV]?\d+(?:\.\d+){1,3}""").matches(tag)) { "更新服务返回了无效版本" }
+        return GpuMonitorRelease(tag, "Xerver $tag", uri.toString(), null,
+            "更新内容请查看发布页面。", compareVersions(tag, GpuMonitorVersion) > 0)
+    }
+
+    private fun fetchLatestApi(): GpuMonitorRelease {
         val connection = URI.create(LatestReleaseApiUrl).toURL().openConnection() as HttpURLConnection
         try {
             connection.requestMethod = "GET"
@@ -59,7 +90,7 @@ internal object UpdateChecker {
                 ?.trim()
                 ?.takeIf(String::isNotBlank)
 
-            GpuMonitorRelease(
+            return GpuMonitorRelease(
                 tagName = tagName,
                 displayName = displayName,
                 pageUrl = pageUrl,

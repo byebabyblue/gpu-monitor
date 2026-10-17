@@ -155,6 +155,7 @@ internal fun isStartupAppearanceReady(
 
 @Composable
 internal fun GpuMonitorDashboardV2(
+    updateController: AppUpdateController,
     showCloseDialog: Boolean,
     onDismissCloseDialog: () -> Unit,
     onTrayLightweightPolicyChanged: (Boolean, Int) -> Unit,
@@ -187,9 +188,10 @@ internal fun GpuMonitorDashboardV2(
     var pendingDeleteServer by remember { mutableStateOf<String?>(null) }
     var removeServerBusyName by remember { mutableStateOf<String?>(null) }
     var removeServerMessage by remember { mutableStateOf("") }
-    var updateBusy by remember { mutableStateOf(false) }
-    var updateMessage by remember { mutableStateOf("") }
-    var updateRelease by remember { mutableStateOf<GpuMonitorRelease?>(null) }
+    val updateBusy = updateController.busy
+    val updateMessage = updateController.message
+    val updateRelease = updateController.release
+    val updateLastAttempt = updateController.lastAttemptMillis
     var hostKeyPrompts by remember { mutableStateOf<List<HostKeyPrompt>>(emptyList()) }
     var hostKeyBusy by remember { mutableStateOf(false) }
     var hostKeyMessage by remember { mutableStateOf("") }
@@ -202,6 +204,11 @@ internal fun GpuMonitorDashboardV2(
     var systemAppsUseLightTheme by remember { mutableStateOf(false) }
     var systemAppearanceLoaded by remember { mutableStateOf(false) }
     var pendingHistoryRangeSave by remember { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(configLoaded, configAvailable, config.ui.updateCheckIntervalHours) {
+        if (!configLoaded || !configAvailable) return@LaunchedEffect
+        updateController.setInterval(config.ui.updateCheckIntervalHours)
+    }
 
     LaunchedEffect(
         config.ui.trayLightweightEnabled,
@@ -461,28 +468,8 @@ internal fun GpuMonitorDashboardV2(
                         serverActionMessage = removeServerMessage,
                         updateBusy = updateBusy,
                         updateMessage = updateMessage,
-                        onCheckUpdate = {
-                            if (!updateBusy) {
-                                updateBusy = true
-                                updateMessage = "正在从 GitHub 检查最新版本…"
-                                updateRelease = null
-                                scope.launch {
-                                    withContext(Dispatchers.IO) { UpdateChecker.fetchLatest() }
-                                        .onSuccess { release ->
-                                            updateRelease = release
-                                            updateMessage = if (release.updateAvailable) {
-                                                "发现新版 ${release.tagName}"
-                                            } else {
-                                                "当前已是最新版 · v$GpuMonitorVersion"
-                                            }
-                                        }
-                                        .onFailure { error ->
-                                            updateMessage = "检查失败：${error.message ?: "未知错误"}"
-                                        }
-                                    updateBusy = false
-                                }
-                            }
-                        },
+                        updateLastAttempt = updateLastAttempt,
+                        onCheckUpdate = { updateController.check(true) },
                         onWallpaperPreview = { path ->
                             config = config.copy(ui = config.ui.copy(wallpaperPath = path))
                         },
@@ -657,7 +644,7 @@ internal fun GpuMonitorDashboardV2(
                 V2UpdateDialog(
                     backdrop = navigationBackdrop,
                     release = release,
-                    onDismiss = { updateRelease = null },
+                    onDismiss = { updateController.release = null },
                     onOpenRelease = {
                         val url = if (release.updateAvailable) {
                             release.installerUrl ?: release.pageUrl
@@ -665,7 +652,7 @@ internal fun GpuMonitorDashboardV2(
                             release.pageUrl
                         }
                         UpdateChecker.openInBrowser(url).onFailure { error ->
-                            updateMessage = "无法打开浏览器：${error.message ?: "未知错误"}"
+                            updateController.message = "无法打开浏览器：${error.message ?: "未知错误"}"
                         }
                     },
                 )
@@ -1725,6 +1712,7 @@ private fun V2SettingsPage(
     serverActionMessage: String,
     updateBusy: Boolean,
     updateMessage: String,
+    updateLastAttempt: Long,
     onCheckUpdate: () -> Unit,
     onWallpaperPreview: (String) -> Unit,
     onCardBlurLevelPreview: (Int) -> Unit,
@@ -1767,8 +1755,10 @@ private fun V2SettingsPage(
     }
     var draft by remember { mutableStateOf(ServerDraft()) }
     var diagnosticsMessage by remember { mutableStateOf("") }
+    var updateIntervalText by remember { mutableStateOf(config.ui.updateCheckIntervalHours.toString()) }
 
     LaunchedEffect(configGeneration) {
+        updateIntervalText = config.ui.updateCheckIntervalHours.toString()
         wallpaper = config.ui.wallpaperPath
         apiPortText = config.polling.apiPort.toString()
         activeSeconds = config.polling.gpuActiveSeconds
@@ -2219,7 +2209,23 @@ private fun V2SettingsPage(
                         fontSize = 9.sp,
                     )
                 }
-                V2ActionButton("检查更新", Icons.Rounded.Refresh, updateBusy, onCheckUpdate)
+                V2ActionButton("立即检查", Icons.Rounded.Refresh, updateBusy, onCheckUpdate)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("自动检查间隔", color = V2Text, fontSize = 12.sp)
+                V2Field(updateIntervalText, { updateIntervalText = it.take(3) }, "小时", Modifier.width(100.dp))
+                Text("12–168 小时，保存后生效", color = V2Muted, fontSize = 10.sp)
+            }
+            val updateHours = updateIntervalText.toIntOrNull()
+            if (updateHours == null || updateHours !in 12..168) {
+                Text("请输入 12 至 168 之间的整数", color = V2Red, fontSize = 10.sp)
+            }
+            V2SegmentedSlider(backdrop, listOf("12 小时", "每天", "每 3 天", "每周"),
+                listOf(12, 24, 72, 168).indexOf(updateHours),
+                { updateIntervalText = listOf(12, 24, 72, 168)[it].toString() },
+                Modifier.width(380.dp), height = 36.dp)
+            if (updateLastAttempt > 0) {
+                Text("上次检查：${java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date(updateLastAttempt))}", color = V2Muted, fontSize = 10.sp)
             }
             if (updateMessage.isNotBlank()) {
                 Text(
@@ -2275,6 +2281,8 @@ private fun V2SettingsPage(
                     Text(saveMessage.ifBlank { "设置保存在 %APPDATA%\\Xerver\\config.json" }, color = V2Dim, fontSize = 10.sp)
                 }
                 V2ActionButton("保存并应用", Icons.Rounded.Save, saveBusy) {
+                    val updateHours = updateIntervalText.toIntOrNull()
+                    if (updateHours == null || updateHours !in 12..168) return@V2ActionButton
                     val port = apiPortText.toIntOrNull()?.coerceIn(1024, 65535) ?: DefaultApiPort
                     onSave(
                         PollSettings(activeSeconds, idleSeconds, diskSeconds, processSeconds, idleThreshold, port),
@@ -2293,6 +2301,8 @@ private fun V2SettingsPage(
                             rememberWindowBounds = rememberWindowBounds,
                             trayLightweightEnabled = trayLightweightEnabled,
                             trayLightweightDelayMinutes = trayLightweightDelayMinutes,
+                            updateCheckIntervalHours = updateHours,
+                            gpuHistoryRangeMinutes = config.ui.gpuHistoryRangeMinutes,
                             windowBounds = config.ui.windowBounds,
                         ),
                     )

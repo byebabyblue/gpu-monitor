@@ -44,8 +44,13 @@ The application and installer use `src/main/resources/app-icon.png` and
 `https://github.com/byebabyblue/gpu-monitor/releases` in Settings. The check
 only reads public GitHub release metadata; it does not upload local settings.
 
-The current release build is `1.2.0`. See the
-[release notes](../docs/releases/v1.2.0.md) for changes and verification details.
+The current release build is `1.2.1`. See the
+[release notes](../docs/releases/v1.2.1.md) for changes.
+
+Settings supports automatic update checks every 12–168 hours (default: 24).
+The last attempt is stored locally, including failures, so restarting does not
+repeat checks. “立即检查” performs a manual check regardless of that interval.
+If the release API is unavailable, a public latest-release redirect is used.
 
 Node now shows network probes originating on each remote GPU server: Baidu,
 GitHub, Tsinghua PyPI, and the official PyTorch wheel index. ICMP ping and HTTPS

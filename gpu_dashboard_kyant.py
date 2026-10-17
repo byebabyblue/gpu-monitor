@@ -3576,6 +3576,11 @@ class Dashboard(QMainWindow):
             tray_lightweight_delay_minutes = 5
         tray_lightweight_delay_minutes = max(1, min(1440, tray_lightweight_delay_minutes))
         try:
+            update_check_interval_hours = int(ui.get("update_check_interval_hours", 24))
+        except (TypeError, ValueError):
+            update_check_interval_hours = 24
+        update_check_interval_hours = max(12, min(168, update_check_interval_hours))
+        try:
             gpu_history_range_minutes = int(
                 ui.get("gpu_history_range_minutes", 1440)
             )
@@ -3643,6 +3648,7 @@ class Dashboard(QMainWindow):
                 "tray_lightweight_enabled": bool(ui.get("tray_lightweight_enabled", False)),
                 "tray_lightweight_delay_minutes": tray_lightweight_delay_minutes,
                 "gpu_history_range_minutes": gpu_history_range_minutes,
+                "update_check_interval_hours": update_check_interval_hours,
                 "window_bounds": window_bounds,
             },
             "servers": servers,
@@ -3808,6 +3814,11 @@ class Dashboard(QMainWindow):
             if not 1 <= tray_lightweight_delay_minutes <= 1440:
                 raise ValueError("Tray lightweight delay must be between 1 and 1440 minutes")
             ui["tray_lightweight_delay_minutes"] = tray_lightweight_delay_minutes
+        if "update_check_interval_hours" in ui_payload:
+            value = ui_payload["update_check_interval_hours"]
+            if isinstance(value, bool) or not isinstance(value, int) or not 12 <= value <= 168:
+                raise ValueError("Update check interval must be an integer between 12 and 168 hours")
+            ui["update_check_interval_hours"] = value
         if "gpu_history_range_minutes" in ui_payload:
             try:
                 gpu_history_range_minutes = int(ui_payload["gpu_history_range_minutes"])

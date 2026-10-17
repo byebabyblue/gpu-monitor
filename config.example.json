@@ -21,7 +21,8 @@
     "remember_window_bounds": false,
     "tray_lightweight_enabled": false,
     "tray_lightweight_delay_minutes": 5,
-    "gpu_history_range_minutes": 1440
+    "gpu_history_range_minutes": 1440,
+    "update_check_interval_hours": 24
   },
   "servers": [
     {

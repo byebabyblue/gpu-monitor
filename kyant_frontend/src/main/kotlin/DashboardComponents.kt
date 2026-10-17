@@ -512,7 +512,7 @@ internal fun V2SegmentedSlider(
             animationSpec = spring(dampingRatio = 0.76f, stiffness = 360f),
             label = "v2-segment-slider",
         )
-        Box(
+        if (selectedIndex >= 0) Box(
             Modifier.offset(x = sliderOffset).width(itemWidth).fillMaxHeight()
                 .clip(shape)
                 .drawBackdrop(
@@ -548,7 +548,7 @@ internal fun V2SegmentedSlider(
                 ) {
                     Text(
                         label,
-                        color = if (index == safeIndex) V2Text else V2Dim,
+                        color = if (selectedIndex >= 0 && index == safeIndex) V2Text else V2Dim,
                         fontSize = 10.sp,
                         fontWeight = if (index == safeIndex) FontWeight.Bold else FontWeight.Normal,
                         maxLines = 1,

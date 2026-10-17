@@ -21,6 +21,8 @@ backups/
 command_analysis_queue.jsonl
 task_notes.json
 task_note_patterns.json
+update-check.timestamp
+update-check-*.tmp
 **/logs/
 __pycache__/
 *.py[cod]

@@ -163,6 +163,7 @@ internal data class UiSettings(
     val trayLightweightEnabled: Boolean = false,
     val trayLightweightDelayMinutes: Int = DefaultTrayLightweightDelayMinutes,
     val gpuHistoryRangeMinutes: Int = DefaultGpuHistoryRangeMinutes,
+    val updateCheckIntervalHours: Int = DefaultUpdateCheckIntervalHours,
     val windowBounds: MonitorWindowBounds? = null,
 )
 
@@ -268,6 +269,7 @@ internal object MonitorClient {
         }
         val uiObject = JsonObject().apply {
             addProperty("wallpaper_path", ui.wallpaperPath)
+            addProperty("update_check_interval_hours", normalizeUpdateCheckIntervalHours(ui.updateCheckIntervalHours))
             addProperty("default_page", ui.defaultPage)
             addProperty("autostart", ui.autostart)
             addProperty("start_minimized_to_tray", ui.startMinimizedToTray)
@@ -466,6 +468,7 @@ internal object MonitorClient {
                 apiPort = settings.intValue("api_port", DefaultApiPort),
             ),
             ui = UiSettings(
+                updateCheckIntervalHours = normalizeUpdateCheckIntervalHours(ui.intValue("update_check_interval_hours", DefaultUpdateCheckIntervalHours)),
                 wallpaperPath = ui.stringValue("wallpaper_path"),
                 defaultPage = ui.stringValue("default_page", "home"),
                 autostart = ui.booleanValue("autostart"),
