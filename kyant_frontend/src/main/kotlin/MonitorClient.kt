@@ -97,6 +97,9 @@ internal data class MonitorServer(
     val disks: List<MonitorDisk> = emptyList(),
     val runningCommands: List<MonitorTask> = emptyList(),
     val queuedCommands: List<MonitorTask> = emptyList(),
+    val network: List<NetworkProbe> = emptyList(),
+    val networkCheckedAt: Double = 0.0,
+    val networkError: String = "",
 ) {
     val isShowcase: Boolean get() = status == "showcase"
     val averageGpuPercent: Double
@@ -115,12 +118,24 @@ internal data class HostKeyPrompt(
 internal data class HistoryPoint(
     val timestampSeconds: Double,
     val value: Double,
+    val memoryPercent: Double? = null,
 )
 
 internal data class GpuHistorySeries(
     val index: Int,
     val name: String,
     val points: List<HistoryPoint>,
+    val dailyPoints: List<HistoryPoint> = emptyList(),
+)
+
+internal data class NetworkProbe(
+    val label: String,
+    val host: String,
+    val pingMs: Double?,
+    val pingStatus: String,
+    val httpsMs: Double?,
+    val httpsStatus: String,
+    val httpCode: Int,
 )
 
 internal data class PollSettings(
@@ -185,10 +200,11 @@ internal object MonitorClient {
             .sortedBy { it.name.lowercase() }
     }
 
-    fun fetchHistory(port: Int, serverName: String): Result<List<GpuHistorySeries>> = runCatching {
+    fun fetchHistory(port: Int, serverName: String, rangeMinutes: Int = DefaultGpuHistoryRangeMinutes): Result<List<GpuHistorySeries>> = runCatching {
         val encoded = URLEncoder.encode(serverName, StandardCharsets.UTF_8)
             .replace("+", "%20")
-        val root = request(port, "GET", "/api/servers/$encoded/history").asJsonObject
+        val range = normalizeGpuHistoryRangeMinutes(rangeMinutes)
+        val root = request(port, "GET", "/api/servers/$encoded/history?range_minutes=$range").asJsonObject
         root.arrayValue("series").map { element ->
             val series = element.asJsonObject
             GpuHistorySeries(
@@ -199,7 +215,12 @@ internal object MonitorClient {
                     HistoryPoint(
                         timestampSeconds = point.doubleValue("timestamp"),
                         value = point.doubleValue("value"),
+                        memoryPercent = point.value("memory_percent")?.asDouble,
                     )
+                },
+                dailyPoints = series.arrayValue("daily_points").map { element ->
+                    val point = element.asJsonObject
+                    HistoryPoint(point.doubleValue("timestamp"), point.doubleValue("value"))
                 },
             )
         }
@@ -406,6 +427,17 @@ internal object MonitorClient {
             disks = disks,
             runningCommands = runningCommands,
             queuedCommands = queuedCommands,
+            network = obj.arrayValue("network").map { element ->
+                val probe = element.asJsonObject
+                NetworkProbe(
+                    probe.stringValue("label"), probe.stringValue("host"),
+                    probe.value("ping_ms")?.asDouble, probe.stringValue("ping_status"),
+                    probe.value("https_ms")?.asDouble, probe.stringValue("https_status"),
+                    probe.intValue("http_code"),
+                )
+            },
+            networkCheckedAt = obj.doubleValue("network_checked_at"),
+            networkError = obj.stringValue("network_error"),
         )
     }
 
@@ -527,7 +559,7 @@ internal fun showcaseHistory(nowSeconds: Double = System.currentTimeMillis() / 1
             val wave = 49.0 + sin(sampleIndex * 0.15 + gpuIndex * 0.72) * 27.0
             val burst = sin(sampleIndex * 0.037 + gpuIndex * 1.8) * 18.0
             val offset = (gpuIndex % 3) * 4.0 - 4.0
-            HistoryPoint(timestamp, (wave + burst + offset).coerceIn(2.0, 99.0))
+            HistoryPoint(timestamp, (wave + burst + offset).coerceIn(2.0, 99.0), (62 + sin(sampleIndex * 0.04 + gpuIndex) * 25).coerceIn(0.0, 100.0))
         }
         GpuHistorySeries(gpuIndex, "H100 GPU $gpuIndex", points)
     }

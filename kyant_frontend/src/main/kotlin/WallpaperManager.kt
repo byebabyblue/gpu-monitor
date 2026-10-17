@@ -30,6 +30,7 @@ internal object WallpaperManager {
         return importWallpaper(path).map { it.displayPath }
     }
 
+    @Synchronized
     fun importWallpaper(path: String): Result<ManagedWallpaper> = runCatching {
         val target = largestDisplayResolution()
         val originalDirectory = originalDirectory().apply { mkdirs() }
@@ -42,14 +43,16 @@ internal object WallpaperManager {
         val configuredPath = configured.toPath().toAbsolutePath().normalize()
         val expectedSuffix = "-${target.width}x${target.height}.png"
 
-        if (configured.isFile && configuredPath.startsWith(displayRoot) && configured.name.endsWith(expectedSuffix)) {
+        if (configured.isFile && configuredPath.startsWith(displayRoot) && configured.name.endsWith(expectedSuffix)
+            && runCatching { imageDimensions(configured) }.isSuccess) {
             val hash = configured.name.substringBefore('-')
             val original = findOriginal(originalDirectory, hash)
+            val dimensions = imageDimensions(configured)
             return@runCatching ManagedWallpaper(
                 originalPath = original?.absolutePath.orEmpty(),
                 displayPath = configured.absolutePath,
-                renderedWidth = target.width,
-                renderedHeight = target.height,
+                renderedWidth = dimensions.first,
+                renderedHeight = dimensions.second,
                 screenWidth = target.width,
                 screenHeight = target.height,
             )
@@ -67,6 +70,7 @@ internal object WallpaperManager {
             else -> configured
         }
         require(source.isFile) { "找不到壁纸文件：${source.absolutePath}" }
+        imageDimensions(source) // Reject invalid files before adding them to the library.
 
         val hash = sha256(source)
         val existingOriginal = findOriginal(originalDirectory, hash)
@@ -77,7 +81,7 @@ internal object WallpaperManager {
         }
 
         val display = File(displayDirectory, "$hash$expectedSuffix")
-        if (!display.isFile) {
+        if (!display.isFile || runCatching { imageDimensions(display) }.isFailure) {
             createDisplayCopy(original, display, target)
         }
         val dimensions = imageDimensions(display)

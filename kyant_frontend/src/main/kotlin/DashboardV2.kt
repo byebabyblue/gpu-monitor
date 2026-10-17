@@ -347,15 +347,16 @@ internal fun GpuMonitorDashboardV2(
         }
     }
 
-    LaunchedEffect(apiPort, selectedServerName, refreshTick, config.polling.gpuActiveSeconds) {
+    LaunchedEffect(apiPort, selectedServerName, refreshTick, config.polling.gpuActiveSeconds, config.ui.gpuHistoryRangeMinutes) {
+        history = emptyList()
         while (true) {
             val name = selectedServerName
             if (name == null) {
                 history = emptyList()
             } else {
-                withContext(Dispatchers.IO) { MonitorClient.fetchHistory(apiPort, name) }
+                withContext(Dispatchers.IO) { MonitorClient.fetchHistory(apiPort, name, config.ui.gpuHistoryRangeMinutes) }
                     .onSuccess { history = it }
-                    .onFailure { history = emptyList() }
+                    .onFailure { /* Keep the last good history through a transient timeout. */ }
             }
             delay(max(2, config.polling.gpuActiveSeconds) * 1000L)
         }
@@ -1039,7 +1040,7 @@ private fun V2OverviewCard(backdrop: Backdrop, server: MonitorServer, modifier: 
 }
 
 @Composable
-private fun V2GpuPage(
+internal fun V2GpuPage(
     backdrop: Backdrop,
     servers: List<MonitorServer>,
     selectedIndex: Int,
@@ -1050,6 +1051,9 @@ private fun V2GpuPage(
     modifier: Modifier,
 ) {
     val selected = servers.getOrNull(selectedIndex)
+    var frozenHistory by remember(selected?.name, rangeMinutes) { mutableStateOf<List<GpuHistorySeries>?>(null) }
+    val chartHistory = frozenHistory ?: history
+    val chartEnd = remember(chartHistory) { System.currentTimeMillis() / 1000.0 }
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         V2ServerSidebar(
             backdrop,
@@ -1081,7 +1085,7 @@ private fun V2GpuPage(
                         Spacer(Modifier.weight(1f))
                         V2SummaryChip("平均负载", "${selected.averageGpuPercent.roundToInt()}%", v2UsageColor(selected.averageGpuPercent))
                         Spacer(Modifier.width(10.dp))
-                        V2SummaryChip("任务", "${selected.runningTasks} / ${selected.queuedTasks}", V2Cyan)
+                        V2SummaryChip("显存占用", "${selected.gpus.sumOf { it.memoryUsedMib }.div(1024.0).let { "%.1f".format(it) }} GiB", V2Cyan)
                     }
                 }
 
@@ -1096,10 +1100,15 @@ private fun V2GpuPage(
                         modifier = Modifier.width(220.dp),
                         height = 36.dp,
                     )
+                    Spacer(Modifier.weight(1f))
+                    V2ActionButton(if (frozenHistory == null) "暂停曲线" else "继续实时", Icons.Rounded.Refresh, false) {
+                        frozenHistory = if (frozenHistory == null) history else null
+                    }
                 }
-                V2GpuLineChart(backdrop, history, rangeMinutes, Modifier.fillMaxWidth().height(286.dp))
-                V2GpuHeatmap(backdrop, history, Modifier.fillMaxWidth().height(255.dp))
                 V2GpuDeviceTable(backdrop, selected)
+                V2GpuLineChart(backdrop, chartHistory, rangeMinutes, Modifier.fillMaxWidth().height(286.dp), windowEndSeconds = chartEnd)
+                V2GpuLineChart(backdrop, chartHistory, rangeMinutes, Modifier.fillMaxWidth().height(250.dp), memory = true, windowEndSeconds = chartEnd)
+                V2GpuHeatmap(backdrop, chartHistory, Modifier.fillMaxWidth().height(255.dp))
             }
         }
     }
@@ -1128,10 +1137,17 @@ private fun V2GpuDeviceTable(backdrop: Backdrop, server: MonitorServer) {
                         Column(Modifier.weight(1f)) {
                             Text(gpu.name, color = V2Dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
-                                "VRAM ${(gpu.memoryUsedMib / 1024.0).roundToInt()} / ${(gpu.memoryTotalMib / 1024.0).roundToInt()} GB",
-                                color = V2Muted,
-                                fontSize = 9.sp,
+                                "显存 ${"%.1f".format(gpu.memoryUsedMib / 1024.0)} / ${"%.1f".format(gpu.memoryTotalMib / 1024.0)} GiB · ${gpu.memoryPercent.roundToInt()}%",
+                                color = if (gpu.memoryPercent >= 90) V2Red else V2Cyan,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
                             )
+                            Spacer(Modifier.height(6.dp))
+                            Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(V2Muted.copy(alpha = 0.15f))) {
+                                Box(Modifier.fillMaxWidth((gpu.memoryPercent / 100).toFloat().coerceIn(0f, 1f)).fillMaxHeight()
+                                    .background(if (gpu.memoryPercent >= 90) V2Red else V2Cyan))
+                            }
+                            Text("剩余 ${"%.1f".format((gpu.memoryTotalMib - gpu.memoryUsedMib).coerceAtLeast(0.0) / 1024)} GiB", color = V2Dim, fontSize = 10.sp)
                         }
                         Text("${gpu.utilization.roundToInt()}%", color = v2UsageColor(gpu.utilization), fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(58.dp))
                         Text("${gpu.temperatureC.roundToInt()}°C", color = if (gpu.temperatureC >= 80) V2Red else V2Dim, fontSize = 11.sp, modifier = Modifier.width(52.dp))
@@ -1205,6 +1221,7 @@ private fun V2NodePage(
                     }
                 }
 
+                V2NetworkPanel(backdrop, selected)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("MOUNTED STORAGE", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))

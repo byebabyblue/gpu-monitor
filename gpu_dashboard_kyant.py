@@ -33,6 +33,8 @@ Config (config.json):
 
 from backend_diagnostics import install_backend_diagnostics, logger as backend_logger
 from windows_autostart import update_autostart
+from gpu_history import append_sample, history_points, RANGE_BUCKET_SECONDS
+from network_probe import probe_command, parse_probe
 
 if __name__ == "__main__":
     install_backend_diagnostics()
@@ -55,7 +57,7 @@ import socket
 from datetime import datetime
 from pathlib import Path
 from threading import Lock, RLock
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, parse_qs
 
 try:
     import paramiko
@@ -211,11 +213,16 @@ class ServerInfo:
         self.disk_used = self.disk_total = self.disk_pct = 0.0
         self.disks: list[dict] = []  # individual filesystems, e.g. /data1, /data2
         self.disk_error = ""
+        self.network = []
+        self.network_checked_at = None
+        self.network_error = ""
 
         self.running_tasks: list[dict] = []
         self.queued_tasks: list[dict]  = []
 
         self.gpu_history: list[list[dict]] = []   # per-GPU rolling history
+        self._gpu_history_by_index = {}
+        self._gpu_history_identity = {}
         self.last_update = None
         self.gpu_events: list[dict] = []          # GPU state change events
         self._prev_gpu_active: dict[int, bool] = {}   # gpu_idx -> was active last poll
@@ -367,6 +374,13 @@ class SSHConnection:
                     self.accepted_host_key,
                 )
             )
+            # Prefer the exact algorithm already verified by the user, even
+            # when this host also offers other (unconfirmed) host key types.
+            client.get_host_keys().add(
+                self.accepted_host_key_name,
+                self.accepted_host_key.get_name(),
+                self.accepted_host_key,
+            )
 
         kwargs = dict(
             hostname=self.host,
@@ -393,13 +407,17 @@ class SSHConnection:
         if key_was_added or self.password:
             kwargs["look_for_keys"] = False
 
-        client.connect(**kwargs)
-        if self.accepted_host_key is not None and self.remember_host_key:
-            self._remember_accepted_host_key()
-        t = client.get_transport()
-        if t:
-            t.set_keepalive(30)
-        self._client = client
+        try:
+            client.connect(**kwargs)
+            if self.accepted_host_key is not None and self.remember_host_key:
+                self._remember_accepted_host_key()
+            t = client.get_transport()
+            if t:
+                t.set_keepalive(30)
+            self._client = client
+        except Exception:
+            client.close()
+            raise
 
     def _remember_accepted_host_key(self):
         if not self.known_hosts_path or self.accepted_host_key is None:
@@ -432,6 +450,19 @@ class SSHConnection:
             client = self._client
             transport = client.get_transport() if client else None
             return bool(transport and transport.is_active())
+
+    def probe_connection(self):
+        """Separate transport pinned to the already-verified monitor host key."""
+        with self._lock:
+            transport = self._client.get_transport() if self._client else None
+            if not transport or not transport.is_active():
+                raise ConnectionError("SSH not connected")
+            key = transport.get_remote_server_key()
+        name = self.host if self.port == 22 else f"[{self.host}]:{self.port}"
+        return SSHConnection(
+            self.host, self.port, self.user, self.key_file, self.password, self.passphrase,
+            accepted_host_key=key, accepted_host_key_name=name,
+        )
 
     # ── exec ──────────────────────────────────────────────────────────
 
@@ -561,8 +592,9 @@ BEGIN {
 
     _GPU_CMD = (
         "(nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,"
-        "memory.total,temperature.gpu,power.draw,power.limit "
-        "--format=csv,noheader,nounits 2>/dev/null || true); "
+        "memory.total,temperature.gpu,power.draw,power.limit,uuid "
+        "--format=csv,noheader,nounits 2>/dev/null); "
+        "gpu_status=$?; printf '\\n__GPU_STATUS__%s\\n' \"$gpu_status\"; "
         "printf '\\n__GPU_PIDS__\\n'; "
         "(nvidia-smi --query-compute-apps=pid "
         "--format=csv,noheader,nounits 2>/dev/null || true)"
@@ -584,11 +616,62 @@ BEGIN {
         self._scheduled_disk_interval = None
         self._last_process_poll = 0.0
         self._gpu_pids: set[str] = set()
+        self._network_lock = Lock()
+        self._network_worker = None
+        self._next_network_poll = 0.0
+        self._network_result = ([], None, "")
+        self._network_stopped = threading.Event()
+        self._probe_ssh = None
+
+    def stop_network(self):
+        self._network_stopped.set()
+        with self._network_lock:
+            ssh = self._probe_ssh
+        if ssh:
+            ssh.disconnect()
+
+    def _refresh_network(self, info):
+        if self._network_stopped.is_set():
+            return
+        # A slow/blocked endpoint must never hold up CPU/GPU collection.
+        with self._network_lock:
+            info.network, info.network_checked_at, info.network_error = self._network_result
+        if time.monotonic() < self._next_network_poll:
+            return
+        if self._network_worker is not None and self._network_worker.is_alive():
+            return
+        self._next_network_poll = time.monotonic() + 60
+
+        def probe():
+            probe_ssh = None
+            try:
+                probe_ssh = self.ssh.probe_connection()
+                with self._network_lock:
+                    self._probe_ssh = probe_ssh
+                probe_ssh.connect()
+                if self._network_stopped.is_set():
+                    return
+                output = probe_ssh.exec(probe_command(), timeout=12, check=True)
+                result = (parse_probe(output), time.time(), "")
+            except Exception:
+                result = ([], time.time(), "网络检测失败，将自动重试")
+            finally:
+                if probe_ssh:
+                    probe_ssh.disconnect()
+                with self._network_lock:
+                    self._probe_ssh = None
+            with self._network_lock:
+                if not self._network_stopped.is_set():
+                    self._network_result = result
+
+        self._network_worker = threading.Thread(target=probe, daemon=True, name="network-probe")
+        self._network_worker.start()
 
     def collect_all(self, info: ServerInfo) -> ServerInfo:
         """Update a snapshot. Connection failures propagate to the monitor thread."""
         self._cpu_mem(info)
         self._gpu(info)
+        self._refresh_network(info)
 
         now = time.monotonic()
         disk_interval = max(5, int(RefreshSettings.disk_interval))
@@ -649,6 +732,9 @@ BEGIN {
     def _gpu(self, info: ServerInfo):
         out = self.ssh.exec(self._GPU_CMD, timeout=10)
         gpu_part, _, pid_part = out.partition("__GPU_PIDS__")
+        gpu_part, marker, status = gpu_part.partition("__GPU_STATUS__")
+        if not marker or status.strip() != "0":
+            raise RuntimeError("GPU 查询失败，已保留历史数据")
         gpus = []
         for line in gpu_part.strip().splitlines():
             if not line.strip() or "[ERR" in line:
@@ -672,6 +758,7 @@ BEGIN {
                 "temp": max(0.0, _safe_float(p[5])),
                 "power": max(0.0, _safe_float(p[6])) if len(p) > 6 else 0.0,
                 "power_lim": max(0.0, _safe_float(p[7])) if len(p) > 7 else 0.0,
+                "uuid": p[8] if len(p) > 8 else p[1],
             })
 
         info.gpus = gpus
@@ -682,41 +769,18 @@ BEGIN {
             if line.strip() and line.split(",", 1)[0].strip().isdigit()
         }
 
-        while len(info.gpu_history) < len(gpus):
-            info.gpu_history.append([])
-        info.gpu_history = info.gpu_history[:len(gpus)]
-
         timestamp = time.time()
-        for i, gpu in enumerate(gpus):
-            self._append_history(info.gpu_history[i], timestamp, gpu["util"])
+        for gpu in gpus:
+            idx, identity = gpu["idx"], gpu["uuid"]
+            if info._gpu_history_identity.get(idx) != identity:
+                info._gpu_history_by_index[idx] = []
+                info._gpu_history_identity[idx] = identity
+            self._append_history(info._gpu_history_by_index[idx], timestamp, gpu["util"], gpu["mem_pct"])
+        info.gpu_history = [info._gpu_history_by_index[g["idx"]] for g in gpus]
 
     @staticmethod
-    def _append_history(history: list[dict], timestamp: float, value: float):
-        """Keep recent samples at full resolution and compact older data by minute."""
-        history.append({"t": timestamp, "v": value})
-        cutoff_24h = timestamp - 24 * 3600
-        while history and history[0]["t"] < cutoff_24h:
-            history.pop(0)
-
-        if len(history) <= 3600:
-            return
-
-        recent_cutoff = timestamp - 30 * 60
-        buckets = {}
-        recent = []
-        for sample in history:
-            if sample["t"] >= recent_cutoff:
-                recent.append(sample)
-                continue
-            bucket = int(sample["t"] // 60)
-            total, count = buckets.get(bucket, (0.0, 0))
-            buckets[bucket] = (total + sample["v"], count + 1)
-
-        compacted = [
-            {"t": bucket * 60 + 30, "v": total / count}
-            for bucket, (total, count) in sorted(buckets.items())
-        ]
-        history[:] = compacted + recent[-3000:]
+    def _append_history(history: list[dict], timestamp: float, value: float, memory=None):
+        append_sample(history, timestamp, value, memory)
 
     def _disk(self, info: ServerInfo):
         """Collect every useful local data mount in one SSH round-trip.
@@ -857,12 +921,16 @@ class MonitorThread(QThread):
         self._stop = True
         self.requestInterruption()
         self._host_key_event.set()
+        if self.collector:
+            self.collector.stop_network()
         if self.ssh:
             self.ssh.disconnect()
 
     def reconnect(self):
         """Drop the current transport so the loop reloads updated config."""
         ssh = self.ssh
+        if self.collector:
+            self.collector.stop_network()
         self.ssh = None
         self.collector = None
         with self._host_key_lock:
@@ -1035,6 +1103,8 @@ class MonitorThread(QThread):
                 if self.ssh:
                     self.ssh.disconnect()
                 self.ssh = None
+                if self.collector:
+                    self.collector.stop_network()
                 self.collector = None
                 self._sleep(3)
                 continue
@@ -1042,6 +1112,8 @@ class MonitorThread(QThread):
             self._sleep(sleep_interval)
 
         # cleanup
+        if self.collector:
+            self.collector.stop_network()
         if self.ssh:
             self.ssh.disconnect()
 
@@ -1049,6 +1121,12 @@ class MonitorThread(QThread):
         end = time.time() + secs
         while (not self._stop and not self.isInterruptionRequested()
                and time.time() < end):
+            collector = self.collector
+            if collector and self.info.connected:
+                previous = self.info.network_checked_at
+                collector._refresh_network(self.info)
+                if collector is self.collector and self.info.network_checked_at != previous:
+                    self._emit_snapshot()
             time.sleep(0.25)
 
 
@@ -1259,7 +1337,7 @@ class MockMonitorThread(QThread):
             info.gpu_history = info.gpu_history[: len(gpus)]
             for i, g in enumerate(gpus):
                 DataCollector._append_history(
-                    info.gpu_history[i], now, g["util"]
+                    info.gpu_history[i], now, g["util"], g["mem_pct"]
                 )
 
             # tasks (shuffle occasionally)
@@ -3578,27 +3656,18 @@ class Dashboard(QMainWindow):
             return fallback
 
     @staticmethod
-    def _history_to_dict(info):
+    def _history_to_dict(info, range_minutes=1440):
         series = []
-        max_points = 720
         for index, history in enumerate(info.gpu_history):
-            if len(history) > max_points:
-                step = (len(history) - 1) / float(max_points - 1)
-                indices = [int(round(i * step)) for i in range(max_points)]
-                indices[-1] = len(history) - 1
-                points = [history[i] for i in indices]
-            else:
-                points = list(history)
+            points = history_points(history, range_minutes)
             gpu_name = ""
             if index < len(info.gpus):
                 gpu_name = str(info.gpus[index].get("name", ""))
             series.append({
-                "index": index,
+                "index": info.gpus[index]["idx"] if index < len(info.gpus) else index,
                 "name": gpu_name,
-                "points": [
-                    {"timestamp": float(point["t"]), "value": float(point["v"])}
-                    for point in points
-                ],
+                "points": points,
+                "daily_points": history_points(history, 1440),
             })
         return {"server": info.name, "series": series}
 
@@ -3916,6 +3985,18 @@ class Dashboard(QMainWindow):
             def log_message(self, fmt, *args):
                 pass
 
+            def parse_request(self):
+                if not super().parse_request():
+                    return False
+                # Native clients only: reject browser origins and DNS rebinding.
+                allowed_hosts = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
+                if (self.headers.get("Host", "").lower() not in allowed_hosts
+                        or self.headers.get("Origin") is not None
+                        or self.headers.get("Sec-Fetch-Site") in {"cross-site", "same-site"}):
+                    self._send_error(403, "Only native loopback clients are allowed")
+                    return False
+                return True
+
             def do_GET(self):
                 path = urlsplit(self.path).path
                 if path == "/api/servers":
@@ -3930,12 +4011,19 @@ class Dashboard(QMainWindow):
                 elif path == "/api/host-key-prompts":
                     self._send_json(sv._api_host_key_prompts())
                 elif path.startswith("/api/servers/") and path.endswith("/history"):
+                    try:
+                        range_minutes = int(parse_qs(urlsplit(self.path).query).get("range_minutes", ["1440"])[0])
+                        if range_minutes not in RANGE_BUCKET_SECONDS:
+                            raise ValueError()
+                    except (ValueError, TypeError):
+                        self._send_error(400, "Invalid history range")
+                        return
                     encoded_name = path[len("/api/servers/"):-len("/history")]
                     name = unquote(encoded_name.rstrip("/"))
                     with sv._state_lock:
                         info = sv._servers.get(name)
                     if info is not None:
-                        self._send_json(sv._history_to_dict(info))
+                        self._send_json(sv._history_to_dict(info, range_minutes))
                     else:
                         self._send_error(404, "Server not found")
                 elif path.startswith("/api/servers/"):
@@ -3987,12 +4075,11 @@ class Dashboard(QMainWindow):
                     self._send_error(404, "Not found")
 
             def do_OPTIONS(self):
-                self.send_response(204)
-                self._send_cors_headers()
-                self.send_header("Content-Length", "0")
-                self.end_headers()
+                self._send_error(405, "Browser access is not supported")
 
             def _read_json(self):
+                if self.headers.get_content_type() != "application/json":
+                    raise ValueError("Content-Type must be application/json")
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                 except ValueError:
@@ -4021,16 +4108,10 @@ class Dashboard(QMainWindow):
                     return
                 self._send_json(result, 200 if result.get("ok") else 400)
 
-            def _send_cors_headers(self):
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-
             def _send_json(self, data, status=200):
                 body = json.dumps(data, default=str, ensure_ascii=False).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
-                self._send_cors_headers()
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -4087,6 +4168,9 @@ class Dashboard(QMainWindow):
                 "volumes": info.disks,
             },
             "disk_error": info.disk_error,
+            "network": info.network,
+            "network_checked_at": info.network_checked_at,
+            "network_error": info.network_error,
             "gpus": [
                 {
                     "index": g["idx"],

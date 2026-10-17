@@ -44,8 +44,22 @@ The application and installer use `src/main/resources/app-icon.png` and
 `https://github.com/byebabyblue/gpu-monitor/releases` in Settings. The check
 only reads public GitHub release metadata; it does not upload local settings.
 
-The current release build is `1.1.0`. See the
-[release notes](../docs/releases/v1.1.0.md) for verification details.
+The current release build is `1.2.0`. See the
+[release notes](../docs/releases/v1.2.0.md) for changes and verification details.
+
+Node now shows network probes originating on each remote GPU server: Baidu,
+GitHub, Tsinghua PyPI, and the official PyTorch wheel index. ICMP ping and HTTPS
+are reported separately. The remote host needs `ping` and `curl`; unavailable
+tools are shown explicitly. Probes run concurrently in a background worker once
+per minute with bounded timeouts and retain normal TLS certificate validation.
+HTTPS timing includes DNS, connection, TLS, and the response, not throughput.
+
+GPU utilization and VRAM charts share the selected time range and a pause/resume
+control. Fixed epoch-aligned buckets replace moving sample-index decimation;
+completed buckets stay stable as new samples arrive. One hour of recent raw
+data is retained, with 30-second weighted buckets up to six hours and
+120-second buckets up to 24 hours. History is in memory and resets on backend restart.
+VRAM is shown in GiB with remaining capacity and a warning at 90% usage.
 
 The Settings page includes `开机最小化到托盘`. When enabled together with
 `开机自启动`, Windows starts Xerver without showing the main window; use the

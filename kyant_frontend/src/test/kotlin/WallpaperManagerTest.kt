@@ -8,6 +8,28 @@ import kotlin.test.assertTrue
 
 class WallpaperManagerTest {
     @Test
+    fun cachedDimensionsAreRealAndCorruptDisplayIsRebuiltFromOriginal() {
+        val temporaryRoot = Files.createTempDirectory("xerver-wallpaper-repair-test").toFile()
+        try {
+            val source = temporaryRoot.resolve("source.png")
+            ImageIO.write(BufferedImage(320, 180, BufferedImage.TYPE_INT_RGB), "png", source)
+            System.setProperty("gpu.monitor.wallpaper.root", temporaryRoot.resolve("managed").absolutePath)
+            val first = WallpaperManager.importWallpaper(source.absolutePath).getOrThrow()
+            val cached = WallpaperManager.importWallpaper(first.displayPath).getOrThrow()
+            assertEquals(320, cached.renderedWidth)
+            assertEquals(180, cached.renderedHeight)
+            java.io.File(first.displayPath).writeText("corrupt cache")
+            val repaired = WallpaperManager.importWallpaper(first.displayPath).getOrThrow()
+            assertEquals(first.displayPath, repaired.displayPath)
+            assertEquals(320, ImageIO.read(java.io.File(repaired.displayPath)).width)
+            assertTrue(java.io.File(first.originalPath).isFile)
+        } finally {
+            System.clearProperty("gpu.monitor.wallpaper.root")
+            temporaryRoot.deleteRecursively()
+        }
+    }
+
+    @Test
     fun keepsOriginalAndCreatesDisplaySizedCopy() {
         val temporaryRoot = Files.createTempDirectory("gpu-monitor-wallpaper-test").toFile()
         val source = temporaryRoot.resolve("source.png")

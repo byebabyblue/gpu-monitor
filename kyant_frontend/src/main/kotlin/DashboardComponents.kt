@@ -127,6 +127,7 @@ internal fun V2Backdrop(
         wallpaperPath,
     ) {
         val requestedPath = wallpaperPath
+        value = V2WallpaperFrame(path = null, bitmap = null)
         val bitmap = if (requestedPath.isBlank()) {
             null
         } else {
@@ -166,21 +167,18 @@ internal fun V2Backdrop(
                         end = Offset(size.width, size.height),
                     )
                 )
-                drawCircle(
-                    color = Color(0xFF4E84FF).copy(alpha = if (darkText) 0.13f else 0.21f),
-                    radius = size.minDimension * 0.39f,
-                    center = Offset(size.width * 0.18f, size.height * 0.16f),
-                )
-                drawCircle(
-                    color = Color(0xFFB765FF).copy(alpha = if (darkText) 0.10f else 0.16f),
-                    radius = size.minDimension * 0.34f,
-                    center = Offset(size.width * 0.88f, size.height * 0.80f),
-                )
-                drawCircle(
-                    color = Color(0xFF35E4BB).copy(alpha = if (darkText) 0.07f else 0.08f),
-                    radius = size.minDimension * 0.21f,
-                    center = Offset(size.width * 0.62f, size.height * 0.18f),
-                )
+                drawRect(Brush.radialGradient(
+                    listOf(Color(0xFF4E84FF).copy(alpha = if (darkText) 0.20f else 0.32f), Color.Transparent),
+                    center = Offset(size.width * 0.18f, size.height * 0.16f), radius = size.minDimension * 0.65f,
+                ))
+                drawRect(Brush.radialGradient(
+                    listOf(Color(0xFFB765FF).copy(alpha = if (darkText) 0.17f else 0.27f), Color.Transparent),
+                    center = Offset(size.width * 0.88f, size.height * 0.80f), radius = size.minDimension * 0.60f,
+                ))
+                drawRect(Brush.radialGradient(
+                    listOf(Color(0xFF35E4BB).copy(alpha = if (darkText) 0.10f else 0.14f), Color.Transparent),
+                    center = Offset(size.width * 0.62f, size.height * 0.18f), radius = size.minDimension * 0.42f,
+                ))
             }
         }
     }
@@ -233,9 +231,9 @@ internal fun V2GlassSurface(
                 effects = {
                     vibrancy()
                     if (surfaceBlurRadius > 0.dp) blur(surfaceBlurRadius.toPx())
-                    val resolvedLensHeight = if (pureGlass) 36.dp else lensRadius
+                    val resolvedLensHeight = if (pureGlass) 24.dp else lensRadius
                     val resolvedLensAmount = if (pureGlass) {
-                        25.dp
+                        10.dp
                     } else {
                         lensAmount ?: (lensRadius.value * 0.72f).dp
                     }
@@ -249,7 +247,8 @@ internal fun V2GlassSurface(
                 highlight = { Highlight.Ambient },
                 onDrawSurface = {
                     if (pureGlass) {
-                        drawRect(Color.White.copy(alpha = 0.012f))
+                        drawRect((if (darkText) Color.White else Color(0xFF101A2A)).copy(alpha = if (darkText) 0.50f else 0.36f))
+                        drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.10f), Color.Transparent)))
                     } else {
                         drawRect(surfaceTint.copy(alpha = surfaceAlpha))
                         drawRect(
@@ -287,6 +286,7 @@ internal fun V2PureGlassSurface(
     readabilityAware: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    val darkText = LocalV2DarkText.current
     val tintMode = LocalV2GlassTint.current
     if (tintMode != "clear") {
         V2GlassSurface(
@@ -312,11 +312,12 @@ internal fun V2PureGlassSurface(
                 effects = {
                     vibrancy()
                     if (cardBlurRadius > 0.dp) blur(cardBlurRadius.toPx())
-                    lens(36.dp.toPx(), 25.dp.toPx())
+                    lens(24.dp.toPx(), 10.dp.toPx())
                 },
                 highlight = { Highlight.Ambient },
                 onDrawSurface = {
-                    drawRect(Color.White.copy(alpha = 0.012f))
+                    drawRect((if (darkText) Color.White else Color(0xFF101A2A)).copy(alpha = if (darkText) 0.50f else 0.36f))
+                    drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.10f), Color.Transparent)))
                 },
             ),
         content = { content() },
@@ -726,13 +727,16 @@ internal fun V2GpuLineChart(
     history: List<GpuHistorySeries>,
     rangeMinutes: Int,
     modifier: Modifier = Modifier,
+    memory: Boolean = false,
+    windowEndSeconds: Double = remember(history) { System.currentTimeMillis() / 1000.0 },
 ) {
-    val windowEndSeconds = System.currentTimeMillis() / 1000.0
     val windowStartSeconds = windowEndSeconds - rangeMinutes.coerceAtLeast(1) * 60.0
     val visible = history.map { series ->
         series.copy(
-            points = series.points.filter { point ->
-                point.timestampSeconds in windowStartSeconds..windowEndSeconds
+            points = series.points.mapNotNull { point ->
+                if (memory) point.memoryPercent?.let { point.copy(value = it) } else point
+            }.filter { point ->
+                point.timestampSeconds.isFinite() && point.value.isFinite() && point.timestampSeconds in windowStartSeconds..windowEndSeconds
             },
         )
     }
@@ -741,8 +745,8 @@ internal fun V2GpuLineChart(
         Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column {
-                    Text("GPU USAGE HISTORY", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Text("Last $rangeLabel · utilization %", color = V2Dim, fontSize = 11.sp)
+                    Text(if (memory) "显存历史 · VRAM" else "GPU USAGE HISTORY", color = if (memory) V2Cyan else V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Last $rangeLabel · ${if (memory) "显存占比" else "利用率"} · 固定 0–100%", color = V2Dim, fontSize = 11.sp)
                 }
                 Spacer(Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -837,7 +841,7 @@ internal fun V2GpuHeatmap(
             Row(verticalAlignment = Alignment.Bottom) {
                 Column {
                     Text("HOURLY GPU LOAD", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Text("One Canvas · glass-like cells without per-cell blur cost", color = V2Dim, fontSize = 10.sp)
+                    Text("过去 24 小时 · 每格为一小时平均利用率", color = V2Dim, fontSize = 10.sp)
                 }
                 Spacer(Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -896,8 +900,8 @@ private fun hourlyMatrix(history: List<GpuHistorySeries>): List<List<Double>> {
     val startHour = endHour - 24 * 3600.0
     return history.take(8).map { series ->
         val buckets = Array(24) { mutableListOf<Double>() }
-        series.points.forEach { point ->
-            val index = ((point.timestampSeconds - startHour) / 3600.0).toInt()
+        series.dailyPoints.ifEmpty { series.points }.forEach { point ->
+            val index = floor((point.timestampSeconds - startHour) / 3600.0).toInt()
             if (index in 0..23) buckets[index].add(point.value)
         }
         buckets.map { values -> if (values.isEmpty()) Double.NaN else values.average() }
