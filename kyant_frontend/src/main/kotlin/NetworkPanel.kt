@@ -32,19 +32,19 @@ internal fun V2NetworkPanel(backdrop: Backdrop, server: MonitorServer) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("网络连通性", color = V2Text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("同一服务器地址共享结果 · 刷新间隔可在设置中调整", color = V2Dim, fontSize = 10.sp)
+                    Text("同一服务器地址共享结果 · 刷新间隔可在设置中调整", color = V2Dim, fontSize = 13.sp)
                 }
                 Text(
                     if (server.networkCheckedAt == 0.0) "等待首轮检测"
                     else if (stale) "历史结果 · ${age.toInt()} 秒前" else "${age.toInt()} 秒前",
-                    color = if (stale) warning else good, fontSize = 10.sp,
+                    color = if (stale) warning else good, fontSize = 13.sp,
                 )
             }
             if (server.networkError.isNotBlank()) {
-                Text(server.networkError, color = warning, fontSize = 12.sp)
+                Text(server.networkError, color = warning, fontSize = 15.sp)
             }
             if (server.network.isEmpty()) {
-                Text(if (server.connected) "正在检测百度、GitHub、清华 PyPI 和 PyTorch 官方源…" else "服务器连接后开始检测", color = V2Muted, fontSize = 12.sp)
+                Text(if (server.connected) "正在检测百度、GitHub、清华 PyPI 和 PyTorch 官方源…" else "服务器连接后开始检测", color = V2Muted, fontSize = 15.sp)
             }
             server.network.forEach { probe ->
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
@@ -55,27 +55,26 @@ internal fun V2NetworkPanel(backdrop: Backdrop, server: MonitorServer) {
                         "ok" -> good
                         "unavailable" -> warning
                         else -> bad
-                    }, fontSize = 12.sp)
+                    }, fontSize = 15.sp)
                     Column(Modifier.weight(1f)) {
-                        Text(probe.label, color = V2Text, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                        Text(probe.host, color = V2Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(probe.label, color = V2Text, fontWeight = FontWeight.Normal, fontSize = 16.sp)
+                        Text(probe.host, color = V2Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(when (probe.pingStatus) {
-                            "ok" -> "Ping ${probe.pingMs?.roundToInt() ?: "—"} ms"
-                            "timeout" -> "Ping 超时 / 被禁"
-                            else -> "Ping 工具不可用"
-                        }, color = V2Dim, fontSize = 11.sp)
+                            "ok" -> "连通延迟 ${probe.pingMs?.roundToInt() ?: "—"} ms"
+                            "timeout" -> "连通检测超时"
+                            else -> "连通检测不可用"
+                        }, color = V2Dim, fontSize = 14.sp)
                         Text(when (probe.httpsStatus) {
-                            "ok" -> "HTTPS ${probe.httpsMs?.roundToInt() ?: "—"} ms"
-                            "http_error" -> "HTTP ${probe.httpCode}"
-                            "unavailable" -> "curl 不可用"
-                            else -> "HTTPS 连接失败"
-                        }, color = if (!stale && probe.httpsStatus == "ok") good else warning, fontSize = 11.sp)
+                            "ok" -> "网站响应 ${probe.httpsMs?.roundToInt() ?: "—"} ms"
+                            "http_error" -> "响应状态 ${probe.httpCode}"
+                            "unavailable" -> "检测工具不可用"
+                            else -> "网站连接失败"
+                        }, color = if (!stale && probe.httpsStatus == "ok") good else warning, fontSize = 14.sp)
                     }
                 }
             }
-            Text("Ping 超时不代表网站不可用；HTTPS 延迟测量的是一次请求耗时，非下载速度。", color = V2Muted, fontSize = 10.sp)
         }
     }
 }

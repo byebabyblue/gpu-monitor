@@ -35,7 +35,7 @@ class SystemAppearanceTest {
             V2DiskIntervalOptions.map { it.first },
         )
         assertEquals(
-            listOf("10s", "60s", "1h", "6h", "24h"),
+            listOf("10秒", "60秒", "1小时", "6小时", "24小时"),
             V2DiskIntervalOptions.map { it.second },
         )
         assertEquals(60, normalizeDiskInterval(30))

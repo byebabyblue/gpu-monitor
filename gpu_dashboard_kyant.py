@@ -3574,10 +3574,10 @@ class Dashboard(QMainWindow):
         if not isinstance(ui, dict):
             ui = {}
         try:
-            font_scale = float(ui.get("font_scale", 1.08))
+            font_scale = float(ui.get("font_scale", 1.35))
         except (TypeError, ValueError):
-            font_scale = 1.08
-        font_scale = max(0.90, min(1.35, font_scale))
+            font_scale = 1.35
+        font_scale = max(0.90, min(1.85, font_scale))
         glass_tint = str(ui.get("glass_tint", "clear") or "clear").lower()
         if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:
             glass_tint = "clear"
@@ -3879,8 +3879,8 @@ class Dashboard(QMainWindow):
                 font_scale = float(ui_payload["font_scale"])
             except (TypeError, ValueError):
                 raise ValueError("Font scale must be a number")
-            if not 0.90 <= font_scale <= 1.35:
-                raise ValueError("Font scale must be between 0.90 and 1.35")
+            if not 0.90 <= font_scale <= 1.85:
+                raise ValueError("Font scale must be between 0.90 and 1.85")
             ui["font_scale"] = round(font_scale, 2)
         # Validate the entire UI payload first. Saving an unrelated setting or
         # rejecting an invalid request must not modify Windows startup entries.

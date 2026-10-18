@@ -108,7 +108,7 @@ internal object MonitorInstallation {
                 addProperty("top_bar_blur_level", BlurLevelMedium)
                 addProperty("bottom_bar_blur_level", BlurLevelMedium)
                 addProperty("glass_tint", "clear")
-                addProperty("font_scale", 1.08)
+                addProperty("font_scale", 1.35)
                 add("hidden_servers", com.google.gson.JsonArray())
                 addProperty("remember_window_bounds", false)
                 addProperty("tray_lightweight_enabled", false)

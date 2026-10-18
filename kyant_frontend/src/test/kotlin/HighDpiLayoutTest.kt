@@ -18,6 +18,12 @@ class HighDpiLayoutTest {
     }
 
     @Test
+    fun defaultTextSizeMatchesFormer135Percent() {
+        assertEquals(1.35, UiSettings().fontScale)
+        assertEquals(1.35f, dashboardDensity(Density(1f, 1f), UiSettings().fontScale).fontScale)
+    }
+
+    @Test
     fun fontSettingDoesNotOverrideTheSystemDpi() {
         val density = dashboardDensity(Density(density = 2.5f, fontScale = 1.25f), userFontScale = 1.16)
 

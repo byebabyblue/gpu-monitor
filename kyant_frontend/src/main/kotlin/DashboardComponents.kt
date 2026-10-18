@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -45,6 +46,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -68,12 +70,18 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 internal val V2Background = Color(0xFF070C17)
-internal val V2Accent = Color(0xFF91B9FF)
-internal val V2AccentStrong = Color(0xFF64A0FF)
-internal val V2Green = Color(0xFF61E4A6)
-internal val V2Yellow = Color(0xFFFFC76A)
-internal val V2Red = Color(0xFFFF778D)
-internal val V2Cyan = Color(0xFF66DFE8)
+internal val V2Accent
+    @Composable get() = if (LocalV2DarkText.current) Color(0xFF1D5FAD) else Color(0xFF91B9FF)
+internal val V2AccentStrong
+    @Composable get() = if (LocalV2DarkText.current) Color(0xFF0867D1) else Color(0xFF64A0FF)
+internal val V2Green
+    @Composable get() = if (LocalV2DarkText.current) Color(0xFF087947) else Color(0xFF61E4A6)
+internal val V2Yellow
+    @Composable get() = if (LocalV2DarkText.current) Color(0xFF84520A) else Color(0xFFFFC76A)
+internal val V2Red
+    @Composable get() = if (LocalV2DarkText.current) Color(0xFFB82642) else Color(0xFFFF778D)
+internal val V2Cyan
+    @Composable get() = if (LocalV2DarkText.current) Color(0xFF006875) else Color(0xFF66DFE8)
 internal val LocalV2CardBlurLevel = staticCompositionLocalOf { BlurLevelOff }
 internal val LocalV2DarkText = staticCompositionLocalOf { false }
 internal val LocalV2TopBarBlurLevel = staticCompositionLocalOf { BlurLevelMedium }
@@ -205,23 +213,23 @@ internal fun V2GlassSurface(
     )
     val tintMode = LocalV2GlassTint.current
     val themedTint = when (tintMode) {
-        "ice" -> Color(0xFF8DB7FF)
-        "violet" -> Color(0xFFB595FF)
-        "aqua" -> Color(0xFF6EDCC8)
-        "warm" -> Color(0xFFFFC58F)
+        "ice" -> Color(0xFF4897F5)
+        "violet" -> Color(0xFFA16DE8)
+        "aqua" -> Color(0xFF27B99E)
+        "warm" -> Color(0xFFF0AA45)
         else -> Color.White
     }
-    val explicitTint = tintColor != null
+    val explicitTint = tintColor != null && tintColor != Color.White
     val pureGlass = tintMode == "clear" && !explicitTint
     val tintStrength = (tintAlpha / 0.20f).coerceIn(0.65f, 1.35f)
     val themedAlpha = when (tintMode) {
         "clear" -> if (darkText) 0.025f else 0.012f
-        else -> if (darkText) 0.045f else 0.032f
+        else -> if (darkText) 0.24f else 0.20f
     } * tintStrength
-    val surfaceTint = tintColor ?: themedTint
+    val surfaceTint = if (explicitTint) tintColor else themedTint
     val surfaceAlpha = if (explicitTint) tintAlpha else themedAlpha
     val gradientTint = if (explicitTint) Color(0xFF8DB7FF) else themedTint
-    val gradientTintAlpha = if (explicitTint) 0.055f else if (tintMode == "clear") 0.006f else 0.026f
+    val gradientTintAlpha = if (explicitTint) 0.055f else if (tintMode == "clear") 0.006f else 0.10f
     Box(
         modifier = modifier
             .clip(shape)
@@ -247,10 +255,11 @@ internal fun V2GlassSurface(
                 highlight = { Highlight.Ambient },
                 onDrawSurface = {
                     if (pureGlass) {
-                        drawRect((if (darkText) Color.White else Color(0xFF101A2A)).copy(alpha = if (darkText) 0.50f else 0.36f))
-                        drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.10f), Color.Transparent)))
+                        drawRect((if (darkText) Color.White else Color(0xFF101A2A)).copy(alpha = if (darkText) 0.16f else 0.42f))
+                        drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.035f), Color.Transparent)))
                     } else {
                         drawRect(surfaceTint.copy(alpha = surfaceAlpha))
+                        if (!darkText) drawRect(Color(0xFF08121F).copy(alpha = 0.32f))
                         drawRect(
                             brush = Brush.linearGradient(
                                 colors = listOf(
@@ -316,8 +325,8 @@ internal fun V2PureGlassSurface(
                 },
                 highlight = { Highlight.Ambient },
                 onDrawSurface = {
-                    drawRect((if (darkText) Color.White else Color(0xFF101A2A)).copy(alpha = if (darkText) 0.50f else 0.36f))
-                    drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.10f), Color.Transparent)))
+                    drawRect((if (darkText) Color.White else Color(0xFF101A2A)).copy(alpha = if (darkText) 0.16f else 0.42f))
+                    drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.035f), Color.Transparent)))
                 },
             ),
         content = { content() },
@@ -335,16 +344,16 @@ internal fun V2Header(
     val topBarBlurLevel = LocalV2TopBarBlurLevel.current
     V2GlassSurface(
         backdrop = backdrop,
-        modifier = Modifier.fillMaxWidth().height(72.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp),
         shape = RoundedCornerShape(32.dp),
-        tintColor = Color.White,
+        tintColor = null,
         tintAlpha = 0.055f,
         blurRadius = 13.dp,
         lensRadius = 38.dp,
         blurLevelOverride = topBarBlurLevel,
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 23.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 23.dp, vertical = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -356,7 +365,6 @@ internal fun V2Header(
             Spacer(Modifier.width(13.dp))
             Column {
                 Text(page.label, color = V2Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text(page.subtitle, color = V2Muted, fontSize = 11.sp)
             }
             Spacer(Modifier.weight(1f))
             V2StatusPill(apiOnline, apiMessage, onRefresh)
@@ -374,9 +382,9 @@ private fun V2StatusPill(online: Boolean, message: String, onRefresh: () -> Unit
             .padding(horizontal = 13.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("●", color = if (online) V2Green else V2Yellow, fontSize = 10.sp)
+        Text("●", color = if (online) V2Green else V2Yellow, fontSize = 14.sp)
         Spacer(Modifier.width(7.dp))
-        Text(message, color = V2Dim, fontSize = 11.sp)
+        Text(message, color = V2Dim, fontSize = 15.sp)
     }
 }
 
@@ -397,7 +405,7 @@ internal fun V2BottomBar(
             backdrop = backdrop,
             modifier = Modifier.fillMaxWidth().height(76.dp),
             shape = RoundedCornerShape(38.dp),
-            tintColor = Color.White,
+            tintColor = null,
             tintAlpha = 0.055f,
             blurRadius = 13.dp,
             lensRadius = 20.dp,
@@ -477,8 +485,8 @@ internal fun V2BottomBar(
                             Text(
                                 tab.label,
                                 color = if (selected) V2Text else V2Dim,
-                                fontSize = 12.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 16.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                             )
                         }
                     }
@@ -499,11 +507,13 @@ internal fun V2SegmentedSlider(
     height: Dp = 38.dp,
 ) {
     if (labels.isEmpty()) return
+    val controlHeight = maxOf(height.value, 24f * LocalDensity.current.fontScale + 12f).dp
+    val selectedSurface = if (LocalV2DarkText.current) Color(0xFF0867D1).copy(alpha = 0.16f) else Color(0xFF081B35).copy(alpha = 0.50f)
     val sliderBlurRadius = blurRadiusForLevel(8.dp, LocalV2CardBlurLevel.current)
     val safeIndex = selectedIndex.coerceIn(0, labels.lastIndex)
-    val shape = RoundedCornerShape(height / 2)
+    val shape = RoundedCornerShape(controlHeight / 2)
     BoxWithConstraints(
-        modifier = modifier.height(height).clip(shape)
+        modifier = modifier.height(controlHeight).clip(shape)
             .background(Color.White.copy(alpha = 0.045f)),
     ) {
         val itemWidth = maxWidth / labels.size.toFloat()
@@ -525,7 +535,7 @@ internal fun V2SegmentedSlider(
                     },
                     highlight = { Highlight.Ambient },
                     onDrawSurface = {
-                        drawRect(Color.White.copy(alpha = 0.085f))
+                        drawRect(selectedSurface)
                         drawRect(
                             brush = Brush.radialGradient(
                                 colors = listOf(
@@ -549,8 +559,8 @@ internal fun V2SegmentedSlider(
                     Text(
                         label,
                         color = if (selectedIndex >= 0 && index == safeIndex) V2Text else V2Dim,
-                        fontSize = 10.sp,
-                        fontWeight = if (index == safeIndex) FontWeight.Bold else FontWeight.Normal,
+                        fontSize = 14.sp,
+                        fontWeight = if (index == safeIndex) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
                     )
                 }
@@ -567,8 +577,8 @@ internal fun V2SummaryChip(title: String, value: String, color: Color, modifier:
             .background(Color.White.copy(alpha = 0.045f))
             .padding(horizontal = 16.dp, vertical = 11.dp),
     ) {
-        Text(title, color = V2Muted, fontSize = 10.sp)
-        Text(value, color = color, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Text(title, color = V2Muted, fontSize = 14.sp)
+        Text(value, color = color, fontSize = 24.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -580,6 +590,8 @@ internal fun V2MetricRing(
     modifier: Modifier = Modifier,
     diameter: Dp = 96.dp,
 ) {
+    val usageColor = v2UsageColor(value)
+    val trackColor = V2Muted.copy(alpha = 0.15f)
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.size(diameter), contentAlignment = Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
@@ -587,23 +599,23 @@ internal fun V2MetricRing(
                 val inset = stroke / 2f + 3.dp.toPx()
                 val arcSize = Size(size.width - inset * 2, size.height - inset * 2)
                 drawArc(
-                    Color.White.copy(alpha = 0.095f), -90f, 360f, false,
+                    trackColor, -90f, 360f, false,
                     Offset(inset, inset), arcSize, style = Stroke(stroke),
                 )
                 drawArc(
-                    v2UsageColor(value), -90f,
+                    usageColor, -90f,
                     value.coerceIn(0.0, 100.0).toFloat() * 3.6f, false,
                     Offset(inset, inset), arcSize,
                     style = Stroke(stroke, cap = StrokeCap.Round),
                 )
             }
-            Text("${value.roundToInt()}%", color = V2Text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("${value.roundToInt()}%", color = V2Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
-        Text(title, color = V2Dim, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(title, color = V2Dim, fontSize = 16.sp, fontWeight = FontWeight.Normal)
         Text(
             subtitle,
             color = V2Muted,
-            fontSize = 9.sp,
+            fontSize = 13.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
@@ -615,9 +627,9 @@ internal fun V2MetricRing(
 internal fun V2UsageBar(label: String, value: Double, color: Color = v2UsageColor(value)) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, color = V2Dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, color = V2Dim, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.weight(1f))
-            Text("${value.roundToInt()}%", color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("${value.roundToInt()}%", color = color, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         }
         Box(
             Modifier.fillMaxWidth().height(7.dp)
@@ -643,7 +655,7 @@ internal fun V2ServerSidebar(
     modifier: Modifier,
 ) {
     val sliderBlurRadius = blurRadiusForLevel(9.dp, LocalV2CardBlurLevel.current)
-    val itemHeight = 66.dp
+    val itemHeight = maxOf(76f, 48f * LocalDensity.current.fontScale + 22f).dp
     val itemSpacing = 8.dp
     val sliderOffset by animateDpAsState(
         targetValue = (itemHeight + itemSpacing) * selectedIndex.toFloat(),
@@ -652,15 +664,16 @@ internal fun V2ServerSidebar(
     )
     val sliderShape = RoundedCornerShape(17.dp)
     val scroll = rememberScrollState()
-    LaunchedEffect(selectedIndex) {
-        val approximate = selectedIndex * 74
+    val sidebarDensity = LocalDensity.current.density
+    LaunchedEffect(selectedIndex, itemHeight, sidebarDensity) {
+        val approximate = (selectedIndex * (itemHeight.value + itemSpacing.value) * sidebarDensity).toInt()
         if (approximate < scroll.value || approximate > scroll.value + 420) {
             scroll.animateScrollTo(max(0, approximate - 110))
         }
     }
     V2GlassSurface(backdrop, modifier, RoundedCornerShape(24.dp)) {
         Column(Modifier.fillMaxSize().padding(18.dp)) {
-            Text("SERVERS", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("服务器", color = V2Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(12.dp))
             Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll)) {
                 Box(
@@ -694,24 +707,24 @@ internal fun V2ServerSidebar(
                                         server.connected -> V2Green
                                         else -> V2Red
                                     },
-                                    fontSize = 10.sp,
+                                    fontSize = 14.sp,
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
                                     server.name,
                                     color = V2Text,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Normal,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
                             Spacer(Modifier.height(5.dp))
                             Text(
-                                if (server.isShowcase) "MOCK · 24H HISTORY"
-                                else "GPU ${server.averageGpuPercent.roundToInt()}% · ${server.gpus.size} DEVICES",
+                                if (server.isShowcase) "演示数据"
+                                else "显卡 ${server.averageGpuPercent.roundToInt()}% · ${server.gpus.size} 张",
                                 color = if (index == selectedIndex) V2Accent else V2Dim,
-                                fontSize = 10.sp,
+                                fontSize = 14.sp,
                             )
                         }
                     }
@@ -741,20 +754,20 @@ internal fun V2GpuLineChart(
         )
     }
     val rangeLabel = gpuHistoryRangeLabel(rangeMinutes)
+    val lineColors = if (LocalV2DarkText.current) listOf(Color(0xFF0867D1), Color(0xFF087947), Color(0xFF84520A), Color(0xFFB82642), Color(0xFF7839B3), Color(0xFF006875), Color(0xFFAA5915), Color(0xFF59761A)) else chartColors
     V2GlassSurface(backdrop, modifier, RoundedCornerShape(22.dp), tintAlpha = 0.20f) {
         Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column {
-                    Text(if (memory) "显存历史 · VRAM" else "GPU USAGE HISTORY", color = if (memory) V2Cyan else V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Text("Last $rangeLabel · ${if (memory) "显存占比" else "利用率"} · 固定 0–100%", color = V2Dim, fontSize = 11.sp)
+                    Text(if (memory) "显存占用历史" else "显卡利用率历史", color = if (memory) V2Cyan else V2Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     visible.take(8).forEachIndexed { index, series ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(7.dp).clip(RoundedCornerShape(4.dp)).background(chartColors[index % chartColors.size]))
+                            Box(Modifier.size(7.dp).clip(RoundedCornerShape(4.dp)).background(lineColors[index % lineColors.size]))
                             Spacer(Modifier.width(4.dp))
-                            Text("${series.index}", color = V2Muted, fontSize = 9.sp)
+                            Text("${series.index}", color = V2Muted, fontSize = 13.sp)
                         }
                     }
                 }
@@ -787,7 +800,7 @@ internal fun V2GpuLineChart(
                             }
                             drawPath(
                                 path,
-                                color = chartColors[index % chartColors.size],
+                                color = lineColors[index % lineColors.size],
                                 style = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
                             )
                         }
@@ -795,28 +808,28 @@ internal fun V2GpuLineChart(
                 }
                 if (visible.none { it.points.size >= 2 }) {
                     Text(
-                        "Collecting history…",
+                        "正在积累历史数据",
                         color = V2Muted,
-                        fontSize = 12.sp,
+                        fontSize = 16.sp,
                         modifier = Modifier.align(Alignment.Center),
                     )
                 }
             }
             Row(Modifier.fillMaxWidth()) {
-                Text("$rangeLabel ago", color = V2Muted, fontSize = 9.sp)
+                Text("${rangeLabel}前", color = V2Muted, fontSize = 13.sp)
                 Spacer(Modifier.weight(1f))
-                Text("now", color = V2Muted, fontSize = 9.sp)
+                Text("现在", color = V2Muted, fontSize = 13.sp)
             }
         }
     }
 }
 
 internal fun gpuHistoryRangeLabel(rangeMinutes: Int): String = when (rangeMinutes) {
-    15 -> "15min"
-    60 -> "1h"
-    6 * 60 -> "6h"
-    24 * 60 -> "24h"
-    else -> if (rangeMinutes % 60 == 0) "${rangeMinutes / 60}h" else "${rangeMinutes}min"
+    15 -> "15分钟"
+    60 -> "1小时"
+    6 * 60 -> "6小时"
+    24 * 60 -> "24小时"
+    else -> if (rangeMinutes % 60 == 0) "${rangeMinutes / 60}小时" else "${rangeMinutes}分钟"
 }
 
 internal fun gpuHistoryWindowFraction(
@@ -840,19 +853,18 @@ internal fun V2GpuHeatmap(
         Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Column {
-                    Text("HOURLY GPU LOAD", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Text("过去 24 小时 · 每格为一小时平均利用率", color = V2Dim, fontSize = 10.sp)
+                    Text("每小时显卡负载", color = V2Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("idle", color = V2Muted, fontSize = 9.sp)
+                    Text("空闲", color = V2Muted, fontSize = 13.sp)
                     listOf(15.0, 45.0, 75.0, 95.0).forEach { value ->
                         Box(
                             Modifier.size(11.dp).clip(RoundedCornerShape(3.dp))
                                 .background(heatColor(value))
                         )
                     }
-                    Text("busy", color = V2Muted, fontSize = 9.sp)
+                    Text("繁忙", color = V2Muted, fontSize = 13.sp)
                 }
             }
             Canvas(Modifier.fillMaxWidth().weight(1f)) {
@@ -884,11 +896,11 @@ internal fun V2GpuHeatmap(
                 }
             }
             Row(Modifier.fillMaxWidth().padding(start = 36.dp)) {
-                Text("24h ago", color = V2Muted, fontSize = 9.sp)
+                Text("24小时前", color = V2Muted, fontSize = 13.sp)
                 Spacer(Modifier.weight(1f))
-                Text("12h", color = V2Muted, fontSize = 9.sp)
+                Text("12小时前", color = V2Muted, fontSize = 13.sp)
                 Spacer(Modifier.weight(1f))
-                Text("now", color = V2Muted, fontSize = 9.sp)
+                Text("现在", color = V2Muted, fontSize = 13.sp)
             }
         }
     }
@@ -911,14 +923,15 @@ private fun hourlyMatrix(history: List<GpuHistorySeries>): List<List<Double>> {
 private fun heatColor(value: Double): Color {
     val fraction = value.coerceIn(0.0, 100.0).toFloat() / 100f
     val base = when {
-        value >= 85.0 -> V2Red
-        value >= 60.0 -> V2Yellow
-        value >= 30.0 -> V2Cyan
-        else -> V2AccentStrong
+        value >= 85.0 -> Color(0xFFFF778D)
+        value >= 60.0 -> Color(0xFFFFC76A)
+        value >= 30.0 -> Color(0xFF66DFE8)
+        else -> Color(0xFF64A0FF)
     }
     return base.copy(alpha = 0.16f + fraction * 0.72f)
 }
 
+@Composable
 internal fun v2UsageColor(value: Double): Color = when {
     value >= 85.0 -> V2Red
     value >= 60.0 -> V2Yellow

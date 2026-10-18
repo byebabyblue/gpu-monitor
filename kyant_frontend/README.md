@@ -1,5 +1,12 @@
 # Xerver
 
+## 1.2.3
+
+- 网络检测并入“通信与刷新频率”，保留按服务器地址共享结果和手动检测。
+- 中文界面，正文使用正常字重；新 100% 相当于此前 135%，支持上下调整。
+- 减少清透的白色蒙层，增强玻璃色调，修复放大字号与窄窗口排版。
+
+
 This folder contains the Compose Desktop frontend for Xerver. The original
 `gpu_dashboard.py` remains untouched; the Kyant version uses the copied
 `gpu_dashboard_kyant.py` backend through the local API.

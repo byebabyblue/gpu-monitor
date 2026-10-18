@@ -27,6 +27,12 @@ class AutostartSettingsTest(unittest.TestCase):
         finally:
             RefreshSettings.network_interval_hours = original
 
+    def test_enlarged_font_scale_is_saved(self):
+        state = self.state(False)
+        Dashboard._api_update_settings(state, {"ui": {"font_scale": 1.8225}})
+        self.assertEqual(1.82, state._cfg["ui"]["font_scale"])
+        state._set_autostart.assert_not_called()
+
     def test_legacy_software_update_interval_is_removed_when_saving(self):
         state = self.state(False)
         state._cfg['ui']['update_check_interval_hours'] = 12

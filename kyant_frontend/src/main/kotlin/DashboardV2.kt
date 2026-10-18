@@ -14,18 +14,24 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Icon
 import androidx.compose.material.OutlinedTextField
@@ -96,11 +102,11 @@ internal enum class V2Tab(
     val key: String,
     val icon: ImageVector,
 ) {
-    Home("Home", "全局状态与需要关注的节点", "home", Icons.Rounded.Home),
-    Overview("Overview", "按服务器查看 CPU、内存、硬盘与 GPU", "overview", Icons.Rounded.Dashboard),
-    Gpu("GPU", "设备历史曲线与每小时负载", "gpu", Icons.Rounded.Memory),
-    Node("Node", "挂载硬盘与运行命令", "node", Icons.Rounded.Storage),
-    Settings("Settings", "连接、刷新、外观与启动行为", "settings", Icons.Rounded.Settings),
+    Home("仪表盘", "全局状态与需要关注的节点", "home", Icons.Rounded.Home),
+    Overview("服务器", "处理器、内存、磁盘与显卡", "overview", Icons.Rounded.Dashboard),
+    Gpu("显卡监控", "设备历史曲线与每小时负载", "gpu", Icons.Rounded.Memory),
+    Node("节点详情", "挂载硬盘与运行命令", "node", Icons.Rounded.Storage),
+    Settings("设置", "连接、刷新、外观与启动行为", "settings", Icons.Rounded.Settings),
     ;
 
     companion object {
@@ -108,7 +114,7 @@ internal enum class V2Tab(
     }
 }
 
-private val V2FontScaleOptions = listOf(0.90, 1.00, 1.08, 1.16, 1.25, 1.35)
+private val V2FontScaleOptions = listOf(1.08, 1.215, 1.35, 1.485, 1.62, 1.8225)
 private val V2BlurLevelLabels = listOf("关闭", "轻度", "中度", "重度")
 internal val V2TrayLightweightDelayOptions = listOf(1, 5, 10, 30, 60)
 internal val V2TextModeOptions = listOf(
@@ -117,11 +123,11 @@ internal val V2TextModeOptions = listOf(
     "light" to "深色",
 )
 internal val V2DiskIntervalOptions = listOf(
-    10 to "10s",
-    60 to "60s",
-    60 * 60 to "1h",
-    6 * 60 * 60 to "6h",
-    24 * 60 * 60 to "24h",
+    10 to "10秒",
+    60 to "60秒",
+    60 * 60 to "1小时",
+    6 * 60 * 60 to "6小时",
+    24 * 60 * 60 to "24小时",
 )
 
 private const val StartupConfigTimeoutMillis = 12_000L
@@ -139,7 +145,7 @@ internal fun normalizeTrayLightweightDelayOption(minutes: Int): Int =
 
 internal fun dashboardDensity(baseDensity: Density, userFontScale: Double): Density = Density(
     density = baseDensity.density,
-    fontScale = baseDensity.fontScale * userFontScale.coerceIn(0.90, 1.35).toFloat(),
+    fontScale = baseDensity.fontScale * userFontScale.coerceIn(0.90, 1.85).toFloat(),
 )
 
 internal fun isStartupAppearanceReady(
@@ -335,7 +341,7 @@ internal fun GpuMonitorDashboardV2(
                         else -> selectedServerName
                     }
                     apiOnline = true
-                    apiMessage = if (visibleFresh.isEmpty()) "LIVE · 0/0 在线" else "LIVE · ${visibleFresh.count { it.connected }}/${visibleFresh.size} 在线"
+                    apiMessage = if (visibleFresh.isEmpty()) "0/0 在线" else "${visibleFresh.count { it.connected }}/${visibleFresh.size} 在线"
                 }
                 .onFailure { error ->
                     apiOnline = false
@@ -374,8 +380,8 @@ internal fun GpuMonitorDashboardV2(
     val visibleServers = servers.filterNot { it.name in config.ui.hiddenServers }
     val selectedIndex = visibleServers.indexOfFirst { it.name == selectedServerName }.coerceAtLeast(0)
     val visibleApiMessage = if (apiOnline) {
-        if (visibleServers.isEmpty()) "LIVE · 0/0 在线"
-        else "LIVE · ${visibleServers.count { it.connected }}/${visibleServers.size} 在线"
+        if (visibleServers.isEmpty()) "0/0 在线"
+        else "${visibleServers.count { it.connected }}/${visibleServers.size} 在线"
     } else {
         startupError.ifBlank { apiMessage }
     }
@@ -388,6 +394,7 @@ internal fun GpuMonitorDashboardV2(
     )
 
     CompositionLocalProvider(
+        androidx.compose.material.LocalTextStyle provides XerverTextStyle,
         LocalDensity provides scaledDensity,
         LocalV2CardBlurLevel provides config.ui.cardBlurLevel,
         LocalV2DarkText provides useDarkText,
@@ -785,7 +792,7 @@ private fun V2StartupScreen(showSlowMessage: Boolean) {
             Text(
                 "XERVER",
                 color = Color(0xFFF4F7FF),
-                fontSize = 19.sp,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.height(7.dp))
@@ -794,7 +801,7 @@ private fun V2StartupScreen(showSlowMessage: Boolean) {
                     Text(
                         "正在载入个性化设置",
                         color = Color(0xFFB9C7DE),
-                        fontSize = 11.sp,
+                        fontSize = 15.sp,
                     )
                 }
             }
@@ -824,7 +831,7 @@ private fun V2StartupScreen(showSlowMessage: Boolean) {
 }
 
 @Composable
-private fun V2HomePage(
+internal fun V2HomePage(
     backdrop: Backdrop,
     servers: List<MonitorServer>,
     onOpenGpu: (String) -> Unit,
@@ -849,21 +856,20 @@ private fun V2HomePage(
             Column(Modifier.fillMaxWidth().padding(22.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                        Text("CONTROL CENTER", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        Text("今天的 GPU 集群", color = V2Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        Text("集群状态", color = V2Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.weight(1f))
                     Text(
                         if (issues.isEmpty()) "运行正常" else "${issues.size} 个节点需检查",
                         color = if (issues.isEmpty()) V2Green else V2Yellow,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Normal,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     V2SummaryChip("在线服务器", "${online.size}/${servers.size}", if (issues.isEmpty()) V2Green else V2Yellow, Modifier.weight(1f))
-                    V2SummaryChip("GPU 设备", allGpus.size.toString(), V2Accent, Modifier.weight(1f))
-                    V2SummaryChip("平均 GPU", "${averageGpu.roundToInt()}%", v2UsageColor(averageGpu), Modifier.weight(1f))
+                    V2SummaryChip("显卡设备", allGpus.size.toString(), V2Accent, Modifier.weight(1f))
+                    V2SummaryChip("平均利用率", "${averageGpu.roundToInt()}%", v2UsageColor(averageGpu), Modifier.weight(1f))
                     V2SummaryChip("运行任务", online.sumOf { it.runningTasks }.toString(), V2Cyan, Modifier.weight(1f))
                 }
             }
@@ -872,10 +878,9 @@ private fun V2HomePage(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             V2GlassSurface(backdrop, Modifier.weight(1.12f).height(300.dp), RoundedCornerShape(24.dp), tintAlpha = 0.20f) {
                 Column(Modifier.fillMaxSize().padding(21.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                    Text("GPU LOAD LEADERS", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     Text("当前负载最高的设备", color = V2Text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     if (allGpus.isEmpty()) {
-                        V2EmptyState("暂无实时 GPU 数据")
+                        V2EmptyState("暂无显卡数据")
                     } else {
                         Column(
                             Modifier.fillMaxWidth().weight(1f).verticalScroll(loadLeadersScroll),
@@ -888,7 +893,7 @@ private fun V2HomePage(
                                         .clickable { onOpenGpu(serverName) }
                                         .padding(horizontal = 13.dp, vertical = 10.dp),
                                 ) {
-                                    V2UsageBar("$serverName · GPU ${gpu.index}", gpu.utilization)
+                                    V2UsageBar("$serverName · 显卡 ${gpu.index}", gpu.utilization)
                                 }
                             }
                         }
@@ -898,15 +903,14 @@ private fun V2HomePage(
 
             V2GlassSurface(backdrop, Modifier.weight(0.88f).height(300.dp), RoundedCornerShape(24.dp), tintAlpha = 0.20f) {
                 Column(Modifier.fillMaxSize().padding(21.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("ATTENTION", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     Text("需要关注", color = V2Text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     val notices = buildList {
                         issues.forEach { add(Triple(it.name, it.error.ifBlank { "连接中断" }, V2Red)) }
                         hotNodes.forEach { server ->
                             val note = when {
                                 server.diskPercent >= 90.0 -> "硬盘 ${server.diskPercent.roundToInt()}%"
-                                server.gpus.any { it.temperatureC >= 80.0 } -> "GPU 温度偏高"
-                                else -> "GPU 接近满载"
+                                server.gpus.any { it.temperatureC >= 80.0 } -> "显卡温度偏高"
+                                else -> "显卡接近满载"
                             }
                             add(Triple(server.name, note, V2Yellow))
                         }
@@ -915,7 +919,7 @@ private fun V2HomePage(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Rounded.CheckCircle, null, tint = V2Green, modifier = Modifier.size(25.dp))
                             Spacer(Modifier.width(10.dp))
-                            Text("没有需要处理的告警", color = V2Dim, fontSize = 13.sp)
+                            Text("没有需要处理的告警", color = V2Dim, fontSize = 16.sp)
                         }
                     } else {
                         Column(
@@ -929,17 +933,15 @@ private fun V2HomePage(
             }
         }
 
-        V2GlassSurface(backdrop, Modifier.fillMaxWidth().height(154.dp), RoundedCornerShape(24.dp), tintAlpha = 0.18f) {
-            Row(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+        V2GlassSurface(backdrop, Modifier.fillMaxWidth().heightIn(min = 154.dp), RoundedCornerShape(24.dp), tintAlpha = 0.18f) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.width(230.dp)) {
-                    Text("CAPACITY", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     Text("集群资源余量", color = V2Text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("来自当前在线节点的实时均值", color = V2Dim, fontSize = 10.sp)
                 }
-                V2MetricRing("CPU", online.map { it.cpuPercent }.averageOrZero(), "${online.sumOf { it.cpuCores }} cores", Modifier.weight(1f), 86.dp)
-                V2MetricRing("RAM", online.map { it.memoryPercent }.averageOrZero(), "system memory", Modifier.weight(1f), 86.dp)
-                V2MetricRing("DISK", online.map { it.diskPercent }.averageOrZero(), "configured path", Modifier.weight(1f), 86.dp)
-                V2MetricRing("GPU", averageGpu, "${allGpus.size} devices", Modifier.weight(1f), 86.dp)
+                V2MetricRing("处理器", online.map { it.cpuPercent }.averageOrZero(), "${online.sumOf { it.cpuCores }} 核", Modifier.weight(1f), 86.dp)
+                V2MetricRing("内存", online.map { it.memoryPercent }.averageOrZero(), "系统内存", Modifier.weight(1f), 86.dp)
+                V2MetricRing("磁盘", online.map { it.diskPercent }.averageOrZero(), "监控目录", Modifier.weight(1f), 86.dp)
+                V2MetricRing("显卡", averageGpu, "${allGpus.size} 张", Modifier.weight(1f), 86.dp)
             }
         }
     }
@@ -955,14 +957,14 @@ private fun V2NoticeRow(name: String, note: String, color: Color, onClick: () ->
         Icon(Icons.Rounded.Warning, null, tint = color, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(9.dp))
         Column(Modifier.weight(1f)) {
-            Text(name, color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Text(note, color = V2Dim, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(name, color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
+            Text(note, color = V2Dim, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
 @Composable
-private fun V2OverviewPage(
+internal fun V2OverviewPage(
     backdrop: Backdrop,
     servers: List<MonitorServer>,
     onOpenGpu: (String) -> Unit,
@@ -973,17 +975,17 @@ private fun V2OverviewPage(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("SERVER OVERVIEW", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("服务器概览", color = V2Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            Text("点击卡片进入 GPU 详情", color = V2Dim, fontSize = 11.sp)
+            Text("点击查看显卡详情", color = V2Dim, fontSize = 15.sp)
         }
         if (servers.isEmpty()) {
-            V2GlassSurface(backdrop, Modifier.fillMaxWidth().height(220.dp)) { V2EmptyState("尚未添加服务器，请前往 Settings") }
+            V2GlassSurface(backdrop, Modifier.fillMaxWidth().height(220.dp)) { V2EmptyState("尚未添加服务器，请前往设置") }
         } else {
             servers.chunked(2).forEach { rowServers ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     rowServers.forEach { server ->
-                        V2OverviewCard(backdrop, server, Modifier.weight(1f).height(230.dp)) { onOpenGpu(server.name) }
+                        V2OverviewCard(backdrop, server, Modifier.weight(1f).heightIn(min = 230.dp)) { onOpenGpu(server.name) }
                     }
                     if (rowServers.size == 1) Spacer(Modifier.weight(1f))
                 }
@@ -996,28 +998,54 @@ private fun V2OverviewPage(
 private fun V2OverviewCard(backdrop: Backdrop, server: MonitorServer, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(24.dp)
     V2GlassSurface(backdrop, modifier.clip(shape).clickable(onClick = onClick), shape, tintAlpha = 0.20f) {
-        Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("●", color = if (server.connected) V2Green else V2Red, fontSize = 10.sp)
+                Text("●", color = if (server.connected) V2Green else V2Red, fontSize = 14.sp)
                 Spacer(Modifier.width(8.dp))
                 Column {
                     Text(server.name, color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        if (server.connected) "${server.gpus.size} GPU · ${server.runningTasks} running · ${server.queuedTasks} queued" else server.error.ifBlank { "offline" },
+                        if (server.connected) "${server.gpus.size} 张显卡 · 运行 ${server.runningTasks} · 排队 ${server.queuedTasks}" else server.error.ifBlank { "离线" },
                         color = V2Dim,
-                        fontSize = 10.sp,
+                        fontSize = 14.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                Text("GPU ${server.averageGpuPercent.roundToInt()}%", color = v2UsageColor(server.averageGpuPercent), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text("显卡 ${server.averageGpuPercent.roundToInt()}%", color = v2UsageColor(server.averageGpuPercent), fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                V2MetricRing("CPU", server.cpuPercent, "${server.cpuCores} cores", Modifier.weight(1f), 82.dp)
-                V2MetricRing("RAM", server.memoryPercent, "${server.memoryUsedGb.roundToInt()}/${server.memoryTotalGb.roundToInt()} GB", Modifier.weight(1f), 82.dp)
-                V2MetricRing("DISK", server.diskPercent, "configured path", Modifier.weight(1f), 82.dp)
-                V2MetricRing("GPU", server.averageGpuPercent, "${server.gpus.size} devices", Modifier.weight(1f), 82.dp)
+                V2MetricRing("处理器", server.cpuPercent, "${server.cpuCores} 核", Modifier.weight(1f), 82.dp)
+                V2MetricRing("内存", server.memoryPercent, "${server.memoryUsedGb.roundToInt()}/${server.memoryTotalGb.roundToInt()} GB", Modifier.weight(1f), 82.dp)
+                V2MetricRing("磁盘", server.diskPercent, "监控目录", Modifier.weight(1f), 82.dp)
+                V2MetricRing("显卡", server.averageGpuPercent, "${server.gpus.size} 张", Modifier.weight(1f), 82.dp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun V2ServerContent(
+    backdrop: Backdrop, servers: List<MonitorServer>, selectedIndex: Int,
+    onSelected: (Int) -> Unit, modifier: Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    BoxWithConstraints(modifier) {
+        val compact = maxWidth < 1100.dp
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (!compact) V2ServerSidebar(backdrop, servers, selectedIndex, onSelected,
+                Modifier.width(270.dp).fillMaxHeight().padding(top = 110.dp, bottom = 112.dp))
+            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())
+                .padding(top = 110.dp, bottom = 112.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (compact && servers.isNotEmpty()) BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val selectorWidth = maxOf(maxWidth, 200.dp * servers.size)
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                        V2SegmentedSlider(backdrop, servers.map { it.name }, selectedIndex, onSelected,
+                            Modifier.width(selectorWidth), height = 48.dp)
+                    }
+                }
+                content()
             }
         }
     }
@@ -1038,63 +1066,51 @@ internal fun V2GpuPage(
     var frozenHistory by remember(selected?.name, rangeMinutes) { mutableStateOf<List<GpuHistorySeries>?>(null) }
     val chartHistory = frozenHistory ?: history
     val chartEnd = remember(chartHistory) { System.currentTimeMillis() / 1000.0 }
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        V2ServerSidebar(
-            backdrop,
-            servers,
-            selectedIndex,
-            onSelected,
-            Modifier.width(270.dp).fillMaxHeight().padding(top = 110.dp, bottom = 112.dp),
-        )
-        Column(
-            Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())
-                .padding(top = 110.dp, bottom = 112.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
+    V2ServerContent(backdrop, servers, selectedIndex, onSelected, modifier) {
             if (selected == null) {
                 V2GlassSurface(backdrop, Modifier.fillMaxWidth().height(300.dp)) { V2EmptyState("没有可显示的服务器") }
             } else {
-                V2GlassSurface(backdrop, Modifier.fillMaxWidth().height(104.dp), RoundedCornerShape(22.dp), tintAlpha = 0.19f) {
-                    Row(Modifier.fillMaxSize().padding(horizontal = 21.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column {
-                            Text(selected.name, color = V2Text, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                V2GlassSurface(backdrop, Modifier.fillMaxWidth().heightIn(min = 104.dp), RoundedCornerShape(22.dp), tintAlpha = 0.19f) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 21.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(selected.name, color = V2Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                             Text(
-                                if (selected.connected) "${selected.gpus.size} GPU · 最后更新 ${formatLastUpdate(selected.lastUpdate)}" else selected.error.ifBlank { "连接中断" },
+                                if (selected.connected) "${selected.gpus.size} 张显卡 · 更新于 ${formatLastUpdate(selected.lastUpdate)}" else selected.error.ifBlank { "连接中断" },
                                 color = V2Dim,
-                                fontSize = 10.sp,
+                                fontSize = 14.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        Spacer(Modifier.weight(1f))
+                        Spacer(Modifier.width(16.dp))
                         V2SummaryChip("平均负载", "${selected.averageGpuPercent.roundToInt()}%", v2UsageColor(selected.averageGpuPercent))
                         Spacer(Modifier.width(10.dp))
                         V2SummaryChip("显存占用", "${selected.gpus.sumOf { it.memoryUsedMib }.div(1024.0).let { "%.1f".format(it) }} GiB", V2Cyan)
                     }
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("HISTORY RANGE", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.width(12.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                  Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("历史范围", color = V2Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.weight(1f))
+                    V2ActionButton(if (frozenHistory == null) "暂停曲线" else "继续实时", Icons.Rounded.Refresh, false) {
+                        frozenHistory = if (frozenHistory == null) history else null
+                    }
+                }
                     V2SegmentedSlider(
                         backdrop = backdrop,
                         labels = GpuHistoryRangeOptions.map(::gpuHistoryRangeLabel),
                         selectedIndex = GpuHistoryRangeOptions.indexOf(rangeMinutes).coerceAtLeast(0),
                         onSelected = { index -> onRangeSelected(GpuHistoryRangeOptions[index]) },
-                        modifier = Modifier.width(220.dp),
-                        height = 36.dp,
+                        modifier = Modifier.fillMaxWidth(),
+                        height = 42.dp,
                     )
-                    Spacer(Modifier.weight(1f))
-                    V2ActionButton(if (frozenHistory == null) "暂停曲线" else "继续实时", Icons.Rounded.Refresh, false) {
-                        frozenHistory = if (frozenHistory == null) history else null
-                    }
                 }
                 V2GpuDeviceTable(backdrop, selected)
                 V2GpuLineChart(backdrop, chartHistory, rangeMinutes, Modifier.fillMaxWidth().height(286.dp), windowEndSeconds = chartEnd)
                 V2GpuLineChart(backdrop, chartHistory, rangeMinutes, Modifier.fillMaxWidth().height(250.dp), memory = true, windowEndSeconds = chartEnd)
                 V2GpuHeatmap(backdrop, chartHistory, Modifier.fillMaxWidth().height(255.dp))
             }
-        }
     }
 }
 
@@ -1107,9 +1123,9 @@ private fun V2GpuDeviceTable(backdrop: Backdrop, server: MonitorServer) {
         readabilityAware = true,
     ) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("GPU DEVICES", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("显卡设备", color = V2Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             if (server.gpus.isEmpty()) {
-                Text("该服务器没有返回 GPU 数据", color = V2Dim, fontSize = 12.sp)
+                Text("暂无显卡数据", color = V2Dim, fontSize = 16.sp)
             } else {
                 server.gpus.forEach { gpu ->
                     Row(
@@ -1117,9 +1133,9 @@ private fun V2GpuDeviceTable(backdrop: Backdrop, server: MonitorServer) {
                             .padding(horizontal = 15.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("GPU ${gpu.index}", color = V2Text, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(62.dp))
+                        Text("显卡 ${gpu.index}", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(82.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(gpu.name, color = V2Dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(gpu.name, color = V2Dim, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
                                 "显存 ${"%.1f".format(gpu.memoryUsedMib / 1024.0)} / ${"%.1f".format(gpu.memoryTotalMib / 1024.0)} GiB · ${gpu.memoryPercent.roundToInt()}%",
                                 color = if (gpu.memoryPercent >= 90) V2Red else V2Cyan,
@@ -1131,11 +1147,11 @@ private fun V2GpuDeviceTable(backdrop: Backdrop, server: MonitorServer) {
                                 Box(Modifier.fillMaxWidth((gpu.memoryPercent / 100).toFloat().coerceIn(0f, 1f)).fillMaxHeight()
                                     .background(if (gpu.memoryPercent >= 90) V2Red else V2Cyan))
                             }
-                            Text("剩余 ${"%.1f".format((gpu.memoryTotalMib - gpu.memoryUsedMib).coerceAtLeast(0.0) / 1024)} GiB", color = V2Dim, fontSize = 10.sp)
+                            Text("剩余 ${"%.1f".format((gpu.memoryTotalMib - gpu.memoryUsedMib).coerceAtLeast(0.0) / 1024)} GiB", color = V2Dim, fontSize = 14.sp)
                         }
-                        Text("${gpu.utilization.roundToInt()}%", color = v2UsageColor(gpu.utilization), fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(58.dp))
-                        Text("${gpu.temperatureC.roundToInt()}°C", color = if (gpu.temperatureC >= 80) V2Red else V2Dim, fontSize = 11.sp, modifier = Modifier.width(52.dp))
-                        Text("${gpu.powerWatts.roundToInt()} W", color = V2Dim, fontSize = 11.sp, modifier = Modifier.width(62.dp))
+                        Text("${gpu.utilization.roundToInt()}%", color = v2UsageColor(gpu.utilization), fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(70.dp))
+                        Text("${gpu.temperatureC.roundToInt()}°C", color = if (gpu.temperatureC >= 80) V2Red else V2Dim, fontSize = 15.sp, modifier = Modifier.width(62.dp))
+                        Text("${gpu.powerWatts.roundToInt()} W", color = V2Dim, fontSize = 15.sp, modifier = Modifier.width(80.dp))
                     }
                 }
             }
@@ -1144,7 +1160,7 @@ private fun V2GpuDeviceTable(backdrop: Backdrop, server: MonitorServer) {
 }
 
 @Composable
-private fun V2NodePage(
+internal fun V2NodePage(
     backdrop: Backdrop,
     servers: List<MonitorServer>,
     selectedIndex: Int,
@@ -1160,19 +1176,7 @@ private fun V2NodePage(
         }
     }
 
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        V2ServerSidebar(
-            backdrop,
-            servers,
-            selectedIndex,
-            onSelected,
-            Modifier.width(270.dp).fillMaxHeight().padding(top = 110.dp, bottom = 112.dp),
-        )
-        Column(
-            Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())
-                .padding(top = 110.dp, bottom = 112.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
+    V2ServerContent(backdrop, servers, selectedIndex, onSelected, modifier) {
             if (selected == null) {
                 V2GlassSurface(backdrop, Modifier.fillMaxWidth().height(300.dp)) {
                     V2EmptyState("没有可显示的服务器")
@@ -1180,25 +1184,25 @@ private fun V2NodePage(
             } else {
                 V2GlassSurface(
                     backdrop,
-                    Modifier.fillMaxWidth().height(104.dp),
+                    Modifier.fillMaxWidth().heightIn(min = 104.dp),
                     RoundedCornerShape(22.dp),
                     tintAlpha = 0.19f,
                 ) {
                     Row(
-                        Modifier.fillMaxSize().padding(horizontal = 21.dp),
+                        Modifier.fillMaxWidth().padding(horizontal = 21.dp, vertical = 18.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column {
-                            Text(selected.name, color = V2Text, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        Column(Modifier.weight(1f)) {
+                            Text(selected.name, color = V2Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                             Text(
                                 if (selected.connected) "当前节点 · ${formatLastUpdate(selected.lastUpdate)}" else selected.error.ifBlank { "连接中断" },
                                 color = V2Dim,
-                                fontSize = 10.sp,
+                                fontSize = 14.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        Spacer(Modifier.weight(1f))
+                        Spacer(Modifier.width(16.dp))
                         V2SummaryChip("挂载盘", selected.disks.size.toString(), V2Accent)
                         Spacer(Modifier.width(10.dp))
                         V2SummaryChip("运行 / 排队", "${selected.runningTasks} / ${selected.queuedTasks}", V2Cyan)
@@ -1207,21 +1211,21 @@ private fun V2NodePage(
 
                 V2NetworkPanel(backdrop, selected)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("MOUNTED STORAGE", color = V2Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("磁盘与挂载", color = V2Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
                     val used = selected.disks.sumOf { it.usedGb }
                     val total = selected.disks.sumOf { it.totalGb }
                     Text(
                         if (selected.disks.isEmpty()) "等待磁盘刷新" else "${formatDiskSize(used)} / ${formatDiskSize(total)}",
                         color = V2Dim,
-                        fontSize = 11.sp,
+                        fontSize = 15.sp,
                     )
                 }
                 if (selected.diskError.isNotBlank()) {
                     Text(
                         "启动时读取挂载盘失败：${selected.diskError} · 将自动重试",
                         color = V2Yellow,
-                        fontSize = 10.sp,
+                        fontSize = 14.sp,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -1234,7 +1238,7 @@ private fun V2NodePage(
                     selected.disks.chunked(2).forEach { rowDisks ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             rowDisks.forEach { disk ->
-                                V2StorageCard(backdrop, disk, Modifier.weight(1f).height(158.dp))
+                                V2StorageCard(backdrop, disk, Modifier.weight(1f).heightIn(min = 174.dp))
                             }
                             if (rowDisks.size == 1) Spacer(Modifier.weight(1f))
                         }
@@ -1248,18 +1252,17 @@ private fun V2NodePage(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column {
-                                Text("COMMANDS", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                 Text("当前进程命令", color = V2Text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                             }
                             Spacer(Modifier.weight(1f))
                             Text(
-                                copyMessage.ifBlank { "单击任务行复制全部字段与完整 Command" },
+                                copyMessage.ifBlank { "点击任务复制命令" },
                                 color = if (copyMessage.isBlank()) V2Dim else V2Green,
-                                fontSize = 10.sp,
+                                fontSize = 14.sp,
                             )
                         }
                         V2TaskTable(
-                            title = "RUNNING COMMANDS",
+                            title = "运行中",
                             tasks = selected.runningCommands,
                             queued = false,
                             onCopy = { task ->
@@ -1267,7 +1270,7 @@ private fun V2NodePage(
                             },
                         )
                         V2TaskTable(
-                            title = "QUEUED COMMANDS",
+                            title = "排队中",
                             tasks = selected.queuedCommands,
                             queued = true,
                             onCopy = { task ->
@@ -1277,7 +1280,6 @@ private fun V2NodePage(
                     }
                 }
             }
-        }
     }
 }
 
@@ -1290,7 +1292,7 @@ private fun V2StorageCard(backdrop: Backdrop, disk: MonitorDisk, modifier: Modif
         shape = RoundedCornerShape(22.dp),
         readabilityAware = true,
     ) {
-        Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Storage, null, tint = usageColor, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(9.dp))
@@ -1306,7 +1308,7 @@ private fun V2StorageCard(backdrop: Backdrop, disk: MonitorDisk, modifier: Modif
                     Text(
                         "${disk.mount} · ${disk.filesystem}",
                         color = V2Muted,
-                        fontSize = 9.sp,
+                        fontSize = 13.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -1323,11 +1325,11 @@ private fun V2StorageCard(backdrop: Backdrop, disk: MonitorDisk, modifier: Modif
                 )
             }
             Row(Modifier.fillMaxWidth()) {
-                Text("已用 ${formatDiskSize(disk.usedGb)}", color = V2Dim, fontSize = 10.sp)
+                Text("已用 ${formatDiskSize(disk.usedGb)}", color = V2Dim, fontSize = 14.sp)
                 Spacer(Modifier.weight(1f))
-                Text("可用 ${formatDiskSize(disk.availableGb)}", color = V2Dim, fontSize = 10.sp)
+                Text("可用 ${formatDiskSize(disk.availableGb)}", color = V2Dim, fontSize = 14.sp)
             }
-            Text("总容量 ${formatDiskSize(disk.totalGb)}", color = V2Muted, fontSize = 9.sp)
+            Text("总容量 ${formatDiskSize(disk.totalGb)}", color = V2Muted, fontSize = 13.sp)
         }
     }
 }
@@ -1339,26 +1341,26 @@ private fun V2TaskTable(
     queued: Boolean,
     onCopy: (MonitorTask) -> Unit,
 ) {
-    Text("$title · ${tasks.size}", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    Text("$title · ${tasks.size}", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("PID", color = V2Muted, fontSize = 9.sp, modifier = Modifier.width(58.dp))
-        Text("USER", color = V2Muted, fontSize = 9.sp, modifier = Modifier.width(78.dp))
-        Text("CPU", color = V2Muted, fontSize = 9.sp, modifier = Modifier.width(54.dp))
-        Text("MEM", color = V2Muted, fontSize = 9.sp, modifier = Modifier.width(54.dp))
-        Text(if (queued) "STATE" else "GPU", color = V2Muted, fontSize = 9.sp, modifier = Modifier.width(62.dp))
-        Text("TIME", color = V2Muted, fontSize = 9.sp, modifier = Modifier.width(76.dp))
-        Text("COMMAND", color = V2Muted, fontSize = 9.sp, modifier = Modifier.weight(1f))
-        Text("NOTE", color = V2Muted, fontSize = 9.sp, modifier = Modifier.width(150.dp))
+        Text("进程", color = V2Muted, fontSize = 13.sp, modifier = Modifier.width(58.dp))
+        Text("用户", color = V2Muted, fontSize = 13.sp, modifier = Modifier.width(78.dp))
+        Text("处理器", color = V2Muted, fontSize = 13.sp, modifier = Modifier.width(54.dp))
+        Text("内存", color = V2Muted, fontSize = 13.sp, modifier = Modifier.width(54.dp))
+        Text(if (queued) "状态" else "显卡", color = V2Muted, fontSize = 13.sp, modifier = Modifier.width(62.dp))
+        Text("时长", color = V2Muted, fontSize = 13.sp, modifier = Modifier.width(76.dp))
+        Text("命令", color = V2Muted, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Text("备注", color = V2Muted, fontSize = 13.sp, modifier = Modifier.width(150.dp))
     }
     if (tasks.isEmpty()) {
         Box(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color.White.copy(alpha = 0.025f))
                 .padding(horizontal = 12.dp, vertical = 13.dp),
         ) {
-            Text(if (queued) "当前没有排队或暂停任务" else "当前没有运行任务", color = V2Muted, fontSize = 10.sp)
+            Text(if (queued) "当前没有排队或暂停任务" else "当前没有运行任务", color = V2Muted, fontSize = 14.sp)
         }
     } else {
         tasks.forEachIndexed { index, task ->
@@ -1369,22 +1371,22 @@ private fun V2TaskTable(
                     .padding(horizontal = 12.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(task.pid, color = V2Text, fontSize = 10.sp, modifier = Modifier.width(58.dp), maxLines = 1)
-                Text(task.user, color = V2Dim, fontSize = 10.sp, modifier = Modifier.width(78.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${task.cpuPercent.roundToInt()}%", color = v2UsageColor(task.cpuPercent), fontSize = 10.sp, modifier = Modifier.width(54.dp))
-                Text("${task.memoryPercent.roundToInt()}%", color = V2Dim, fontSize = 10.sp, modifier = Modifier.width(54.dp))
+                Text(task.pid, color = V2Text, fontSize = 14.sp, modifier = Modifier.width(58.dp), maxLines = 1)
+                Text(task.user, color = V2Dim, fontSize = 14.sp, modifier = Modifier.width(78.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${task.cpuPercent.roundToInt()}%", color = v2UsageColor(task.cpuPercent), fontSize = 14.sp, modifier = Modifier.width(54.dp))
+                Text("${task.memoryPercent.roundToInt()}%", color = V2Dim, fontSize = 14.sp, modifier = Modifier.width(54.dp))
                 Text(
                     if (queued) task.state.ifBlank { "—" } else task.gpu.ifBlank { "—" },
                     color = if (!queued && task.gpu != "—") V2Green else V2Dim,
-                    fontSize = 10.sp,
+                    fontSize = 14.sp,
                     modifier = Modifier.width(62.dp),
                     maxLines = 1,
                 )
-                Text(task.elapsed, color = V2Dim, fontSize = 10.sp, modifier = Modifier.width(76.dp), maxLines = 1)
+                Text(task.elapsed, color = V2Dim, fontSize = 14.sp, modifier = Modifier.width(76.dp), maxLines = 1)
                 Text(
                     task.command,
                     color = V2Text,
-                    fontSize = 10.sp,
+                    fontSize = 14.sp,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1392,7 +1394,7 @@ private fun V2TaskTable(
                 Text(
                     task.note.ifBlank { "—" },
                     color = V2Muted,
-                    fontSize = 9.sp,
+                    fontSize = 13.sp,
                     modifier = Modifier.width(150.dp),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1412,15 +1414,15 @@ private fun V2DeleteServerDialog(
     onConfirm: () -> Unit,
 ) {
     V2GlassDialogFrame(backdrop, onDismiss) {
-        Text("DELETE SERVER", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("删除服务器", color = V2Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         Text("删除 $serverName？", color = V2Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(
             "这会从 config.json 删除该服务器的地址、登录方式与监控配置。隐藏服务器不会产生这些影响。",
             color = V2Dim,
-            fontSize = 11.sp,
+            fontSize = 15.sp,
         )
         if (message.isNotBlank()) {
-            Text(message, color = if (message.startsWith("删除失败")) V2Red else V2Yellow, fontSize = 10.sp)
+            Text(message, color = if (message.startsWith("删除失败")) V2Red else V2Yellow, fontSize = 14.sp)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             V2GlassDialogButton(
@@ -1452,31 +1454,31 @@ private fun V2HostKeyDialog(
     onDecision: (String) -> Unit,
 ) {
     V2GlassDialogFrame(backdrop, onDismiss = {}) {
-        Text("SSH HOST KEY", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("主机密钥", color = V2Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         Text("首次连接需要确认服务器指纹", color = V2Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(
             "请确认下面的服务器主机指纹。未确认前不会继续读取服务器数据。",
             color = V2Dim,
-            fontSize = 11.sp,
+            fontSize = 15.sp,
         )
         Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp))
                 .background(Color.White.copy(alpha = 0.035f)).padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            Text("${prompt.serverName} · ${prompt.user}", color = V2Text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            Text("${prompt.host}:${prompt.port}", color = V2Dim, fontSize = 11.sp)
-            Text("密钥类型 · ${prompt.keyType}", color = V2Dim, fontSize = 10.sp)
+            Text("${prompt.serverName} · ${prompt.user}", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
+            Text("${prompt.host}:${prompt.port}", color = V2Dim, fontSize = 15.sp)
+            Text("密钥类型 · ${prompt.keyType}", color = V2Dim, fontSize = 14.sp)
             Text(
                 prompt.fingerprint,
                 color = V2Text,
-                fontSize = 11.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (message.isNotBlank()) Text(message, color = V2Red, fontSize = 10.sp)
+        if (message.isNotBlank()) Text(message, color = V2Red, fontSize = 14.sp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             V2GlassDialogButton(
                 backdrop = backdrop,
@@ -1523,7 +1525,7 @@ private fun V2GlassToast(backdrop: Backdrop, message: String) {
         ) {
             Icon(Icons.Rounded.CheckCircle, null, tint = V2Text, modifier = Modifier.size(17.dp))
             Spacer(Modifier.width(7.dp))
-            Text(message, color = V2Text, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text(message, color = V2Text, fontSize = 15.sp, fontWeight = FontWeight.Normal)
         }
     }
 }
@@ -1536,7 +1538,7 @@ private fun V2UpdateDialog(
     onOpenRelease: () -> Unit,
 ) {
     V2GlassDialogFrame(backdrop, onDismiss) {
-        Text("SOFTWARE UPDATE", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("软件更新", color = V2Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         Text(
             if (release.updateAvailable) "发现新版 ${release.tagName}" else "已经是最新版",
             color = V2Text,
@@ -1544,15 +1546,15 @@ private fun V2UpdateDialog(
             fontWeight = FontWeight.Bold,
         )
         Text(
-            "当前 v$GpuMonitorVersion · GitHub 最新 ${release.tagName}",
+            "当前 v$GpuMonitorVersion · 最新 ${release.tagName}",
             color = V2Dim,
-            fontSize = 11.sp,
+            fontSize = 15.sp,
         )
         if (release.notes.isNotBlank()) {
             Text(
                 release.notes,
                 color = V2Muted,
-                fontSize = 10.sp,
+                fontSize = 14.sp,
                 lineHeight = 15.sp,
                 maxLines = 8,
                 overflow = TextOverflow.Ellipsis,
@@ -1587,12 +1589,12 @@ private fun V2CloseApplicationDialog(
     onReturn: () -> Unit,
 ) {
     V2GlassDialogFrame(backdrop, onReturn) {
-        Text("CLOSE XERVER", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("关闭软件", color = V2Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         Text("关闭软件？", color = V2Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(
             "直接关闭会停止监控后端。选择最小化到系统托盘后，程序会继续在后台运行；点击右下角托盘图标即可恢复窗口。",
             color = V2Dim,
-            fontSize = 11.sp,
+            fontSize = 15.sp,
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             V2GlassDialogButton(
@@ -1688,15 +1690,16 @@ private fun V2GlassDialogButton(
             Text(
                 label,
                 color = if (enabled) V2Text else V2Muted,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Normal,
             )
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun V2SettingsPage(
+internal fun V2SettingsPage(
     backdrop: Backdrop,
     config: DashboardConfig,
     configGeneration: Int,
@@ -1794,42 +1797,11 @@ private fun V2SettingsPage(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(top = 110.dp, bottom = 112.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        V2SettingsSection(backdrop, "连通性", "网络检测", Icons.Rounded.Refresh, Modifier.fillMaxWidth()) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("自动检测间隔", color = V2Text, fontSize = 12.sp)
-                V2Field(networkHours, { networkHours = it.filter(Char::isDigit).take(3) }, "12–168 小时", Modifier.width(140.dp))
-                V2ActionButton("保存间隔", Icons.Rounded.Save, networkBusy) {
-                    val hours = networkHours.toIntOrNull()
-                    if (hours != null && hours in 12..168) {
-                        networkBusy = true
-                        wallpaperScope.launch {
-                            withContext(Dispatchers.IO) { MonitorClient.saveNetworkInterval(apiPort, hours) }
-                                .onSuccess { onNetworkIntervalSaved(hours); networkMessage = "网络检测间隔已保存" }
-                                .onFailure { networkMessage = "保存失败：${it.message.orEmpty()}" }
-                            networkBusy = false
-                        }
-                    }
-                }
-                Spacer(Modifier.weight(1f))
-                V2ActionButton("立即检测", Icons.Rounded.Refresh, networkBusy) {
-                    networkBusy = true
-                    wallpaperScope.launch {
-                        withContext(Dispatchers.IO) { MonitorClient.refreshNetwork(apiPort) }
-                            .onSuccess { networkMessage = if (it > 0) "已开始检测，同一地址只检测一次" else "没有已连接的服务器" }
-                            .onFailure { networkMessage = "检测失败：${it.message.orEmpty()}" }
-                        networkBusy = false
-                    }
-                }
-            }
-            V2SegmentedSlider(backdrop, listOf("12 小时", "每天", "每 3 天", "每周"), listOf(12,24,72,168).indexOf(networkHours.toIntOrNull()),
-                { networkHours = listOf(12,24,72,168)[it].toString() }, Modifier.width(380.dp), height = 36.dp)
-            if (networkHours.toIntOrNull()?.let { it in 12..168 } != true) Text("请输入12至168之间的整数小时", color = V2Red, fontSize = 11.sp)
-            Text("同一服务器地址共用检测结果，正在进行的请求会自动合并。", color = V2Muted, fontSize = 10.sp)
-            if (networkMessage.isNotBlank()) Text(networkMessage, color = V2Dim, fontSize = 11.sp)
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            V2SettingsSection(backdrop, "APPEARANCE", "外观与默认页面", Icons.Rounded.Image, Modifier.weight(1f)) {
-                Text("壁纸", color = V2Dim, fontSize = 11.sp)
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val settingsWidth = if (maxWidth < 1300.dp) maxWidth else (maxWidth - 16.dp) / 2
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp), maxItemsInEachRow = if (maxWidth < 1300.dp) 1 else 2) {
+            V2SettingsSection(backdrop, "外观", "外观与默认页面", Icons.Rounded.Image, Modifier.width(settingsWidth)) {
+                Text("壁纸", color = V2Dim, fontSize = 15.sp)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     V2Field(wallpaper, { wallpaper = it }, "图片路径", Modifier.weight(1f))
                     V2ActionButton("选择", Icons.Rounded.Image, wallpaperBusy) {
@@ -1841,7 +1813,7 @@ private fun V2SettingsPage(
                                     .onSuccess { asset ->
                                         wallpaper = asset.displayPath
                                         onWallpaperPreview(asset.displayPath)
-                                        wallpaperMessage = "已保留原图，界面使用 ${asset.renderedWidth} × ${asset.renderedHeight} 优化图"
+                                        wallpaperMessage = "壁纸已更新"
                                     }
                                     .onFailure { error ->
                                         wallpaperMessage = "壁纸处理失败：${error.message ?: "无法读取图片"}"
@@ -1856,10 +1828,10 @@ private fun V2SettingsPage(
                         onWallpaperPreview("")
                     }
                 }
-                Text(
-                    wallpaperMessage.ifBlank { "原图保存在本机 original 文件夹，界面只读取 display 优化图；点击保存后永久生效。" },
+                if (wallpaperMessage.isNotBlank()) Text(
+                    wallpaperMessage,
                     color = if (wallpaperMessage.startsWith("壁纸处理失败")) V2Red else V2Muted,
-                    fontSize = 9.sp,
+                    fontSize = 13.sp,
                 )
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.035f))
@@ -1869,8 +1841,8 @@ private fun V2SettingsPage(
                     Text(
                         "主题",
                         color = V2Text,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Normal,
                         modifier = Modifier.weight(1f),
                     )
                     V2SegmentedSlider(
@@ -1891,8 +1863,7 @@ private fun V2SettingsPage(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.width(128.dp)) {
-                        Text("玻璃色调", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("纯玻璃或主题渐变", color = V2Muted, fontSize = 9.sp)
+                        Text("玻璃色调", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
                     }
                     val tintValues = listOf("clear", "ice", "violet", "aqua", "warm")
                     V2SegmentedSlider(
@@ -1913,15 +1884,14 @@ private fun V2SettingsPage(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.width(128.dp)) {
-                        Text("字体大小", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("当前 ${(fontScale * 100).roundToInt()}%", color = V2Muted, fontSize = 9.sp)
+                        Text("字体大小", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
                     }
                     val selectedFontIndex = V2FontScaleOptions.indices.minByOrNull { index ->
                         kotlin.math.abs(V2FontScaleOptions[index] - fontScale)
                     } ?: 2
                     V2SegmentedSlider(
                         backdrop = backdrop,
-                        labels = V2FontScaleOptions.map { "${(it * 100).roundToInt()}%" },
+                        labels = V2FontScaleOptions.map { "${(it / 1.35 * 100).roundToInt()}%" },
                         selectedIndex = selectedFontIndex,
                         onSelected = { index ->
                             fontScale = V2FontScaleOptions[index]
@@ -1937,10 +1907,10 @@ private fun V2SettingsPage(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "玻璃卡片模糊",
+                        "卡片模糊",
                         color = V2Text,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Normal,
                         modifier = Modifier.width(128.dp),
                     )
                     V2SegmentedSlider(
@@ -1963,8 +1933,8 @@ private fun V2SettingsPage(
                     Text(
                         "顶栏模糊",
                         color = V2Text,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Normal,
                         modifier = Modifier.width(128.dp),
                     )
                     V2SegmentedSlider(
@@ -1987,8 +1957,8 @@ private fun V2SettingsPage(
                     Text(
                         "底栏模糊",
                         color = V2Text,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Normal,
                         modifier = Modifier.width(128.dp),
                     )
                     V2SegmentedSlider(
@@ -2003,7 +1973,7 @@ private fun V2SettingsPage(
                         height = 34.dp,
                     )
                 }
-                Text("进入后默认页面", color = V2Dim, fontSize = 11.sp)
+                Text("进入后默认页面", color = V2Dim, fontSize = 15.sp)
                 V2SegmentedSlider(
                     backdrop = backdrop,
                     labels = V2Tab.entries.map { it.label },
@@ -2018,8 +1988,7 @@ private fun V2SettingsPage(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("开机自启动", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("登录 Windows 后自动启动 Xerver", color = V2Muted, fontSize = 9.sp)
+                        Text("开机自启动", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
                     }
                     Switch(
                         checked = autostart,
@@ -2034,8 +2003,7 @@ private fun V2SettingsPage(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("开机最小化到托盘", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("开机自启动时不显示主窗口，点击托盘图标打开", color = V2Muted, fontSize = 9.sp)
+                        Text("开机最小化到托盘", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
                     }
                     Switch(
                         checked = startMinimizedToTray,
@@ -2050,8 +2018,7 @@ private fun V2SettingsPage(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("记忆窗口位置和大小", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("关闭软件时保存坐标与尺寸；下次打开会校正到当前屏幕内", color = V2Muted, fontSize = 9.sp)
+                        Text("记忆窗口位置和大小", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
                     }
                     Switch(
                         checked = rememberWindowBounds,
@@ -2068,8 +2035,7 @@ private fun V2SettingsPage(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("托盘轻量化", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("进入系统托盘后仅保留后台监控", color = V2Muted, fontSize = 9.sp)
+                        Text("托盘轻量化", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
                     }
                     Switch(
                         checked = trayLightweightEnabled,
@@ -2089,13 +2055,13 @@ private fun V2SettingsPage(
                         Text(
                             "进入时间",
                             color = V2Text,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Normal,
                             modifier = Modifier.width(128.dp),
                         )
                         V2SegmentedSlider(
                             backdrop = backdrop,
-                            labels = V2TrayLightweightDelayOptions.map { "${it}min" },
+                            labels = V2TrayLightweightDelayOptions.map { "${it}分钟" },
                             selectedIndex = V2TrayLightweightDelayOptions.indexOf(trayLightweightDelayMinutes)
                                 .coerceAtLeast(0),
                             onSelected = { index ->
@@ -2112,10 +2078,10 @@ private fun V2SettingsPage(
                 }
             }
 
-            V2SettingsSection(backdrop, "CONNECTION", "通信与刷新频率", Icons.Rounded.Refresh, Modifier.weight(1f)) {
+            V2SettingsSection(backdrop, "通信", "通信与刷新频率", Icons.Rounded.Refresh, Modifier.width(settingsWidth)) {
                 V2Field(apiPortText, { apiPortText = it.filter(Char::isDigit).take(5) }, "前后端通信端口", Modifier.fillMaxWidth())
-                V2IntervalRow(backdrop, "活跃 GPU", activeSeconds, listOf(1, 3, 5, 10)) { activeSeconds = it }
-                V2IntervalRow(backdrop, "空闲 GPU", idleSeconds, listOf(30, 60, 120, 300)) { idleSeconds = it }
+                V2IntervalRow(backdrop, "显卡活跃时", activeSeconds, listOf(1, 3, 5, 10)) { activeSeconds = it }
+                V2IntervalRow(backdrop, "显卡空闲时", idleSeconds, listOf(30, 60, 120, 300)) { idleSeconds = it }
                 V2IntervalRow(
                     backdrop = backdrop,
                     label = "硬盘",
@@ -2124,14 +2090,50 @@ private fun V2SettingsPage(
                     displayLabels = V2DiskIntervalOptions.map { it.second },
                 ) { diskSeconds = it }
                 V2IntervalRow(backdrop, "任务列表", processSeconds, listOf(3, 6, 10, 30, 60)) { processSeconds = it }
-                V2IntervalRow(backdrop, "空闲判定", idleThreshold, listOf(300, 600, 1200, 1800), "s") { idleThreshold = it }
-                Text("修改通信端口后需要重启软件；其余刷新项立即生效。", color = V2Muted, fontSize = 9.sp)
+                V2IntervalRow(backdrop, "空闲判定", idleThreshold, listOf(300, 600, 1200, 1800), "秒") { idleThreshold = it }
+                androidx.compose.material.Divider(color = V2Muted.copy(alpha = 0.20f), modifier = Modifier.padding(vertical = 8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("网络检测", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal, modifier = Modifier.weight(1f))
+                    V2ActionButton("立即检测", Icons.Rounded.Refresh, networkBusy) {
+                        networkBusy = true
+                        wallpaperScope.launch {
+                            withContext(Dispatchers.IO) { MonitorClient.refreshNetwork(apiPort) }
+                                .onSuccess { networkMessage = if (it > 0) "已开始检测，同一IP只检测一次" else "没有已连接的服务器" }
+                                .onFailure { networkMessage = "检测失败：${it.message.orEmpty()}" }
+                            networkBusy = false
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("间隔", color = V2Dim, fontSize = 14.sp)
+                    V2Field(networkHours, { networkHours = it.filter(Char::isDigit).take(3) }, "12–168", Modifier.width(110.dp))
+                    Text("小时", color = V2Dim, fontSize = 14.sp)
+                    Spacer(Modifier.weight(1f))
+                    V2ActionButton("保存间隔", Icons.Rounded.Save, networkBusy) {
+                        val hours = networkHours.toIntOrNull()
+                        if (hours != null && hours in 12..168) {
+                            networkBusy = true
+                            wallpaperScope.launch {
+                                withContext(Dispatchers.IO) { MonitorClient.saveNetworkInterval(apiPort, hours) }
+                                    .onSuccess { onNetworkIntervalSaved(hours); networkMessage = "检测间隔已保存" }
+                                    .onFailure { networkMessage = "保存失败：${it.message.orEmpty()}" }
+                                networkBusy = false
+                            }
+                        }
+                    }
+                }
+                V2SegmentedSlider(backdrop, listOf("12小时", "每天", "每3天", "每周"), listOf(12,24,72,168).indexOf(networkHours.toIntOrNull()),
+                    { networkHours = listOf(12,24,72,168)[it].toString() }, Modifier.fillMaxWidth(), height = 38.dp)
+                if (networkHours.toIntOrNull()?.let { it in 12..168 } != true) Text("间隔须为12至168小时", color = V2Red, fontSize = 14.sp)
+                if (networkMessage.isNotBlank()) Text(networkMessage, color = V2Dim, fontSize = 14.sp)
+
             }
         }
 
+        }
         V2SettingsSection(
             backdrop,
-            "SERVER VISIBILITY",
+            "服务器管理",
             "服务器显示与删除",
             Icons.Rounded.Computer,
             Modifier.fillMaxWidth(),
@@ -2140,18 +2142,18 @@ private fun V2SettingsPage(
                 Text(
                     "隐藏只影响界面与统计；删除会从 config.json 移除服务器。",
                     color = V2Muted,
-                    fontSize = 10.sp,
+                    fontSize = 14.sp,
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
                     "显示 $serverCount / ${serverNames.size}",
                     color = V2Dim,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Normal,
                 )
             }
             if (serverNames.isEmpty()) {
-                Text("尚未添加服务器", color = V2Muted, fontSize = 11.sp)
+                Text("尚未添加服务器", color = V2Muted, fontSize = 15.sp)
             } else {
                 serverNames.chunked(2).forEach { rowNames ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2164,11 +2166,11 @@ private fun V2SettingsPage(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Column(Modifier.weight(1f)) {
-                                    Text(name, color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(name, color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
                                     Text(
                                         if (hidden) "已隐藏 · 不参与界面统计" else "显示中 · 参与界面统计",
                                         color = if (hidden) V2Yellow else V2Muted,
-                                        fontSize = 9.sp,
+                                        fontSize = 13.sp,
                                     )
                                 }
                                 Switch(
@@ -2187,7 +2189,7 @@ private fun V2SettingsPage(
                                         .padding(horizontal = 12.dp, vertical = 8.dp),
                                     contentAlignment = Alignment.Center,
                                 ) {
-                                    Text("删除", color = V2Red, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("删除", color = V2Red, fontSize = 14.sp, fontWeight = FontWeight.Normal)
                                 }
                             }
                         }
@@ -2199,22 +2201,22 @@ private fun V2SettingsPage(
                 Text(
                     serverActionMessage,
                     color = if (serverActionMessage.startsWith("删除失败")) V2Red else V2Green,
-                    fontSize = 11.sp,
+                    fontSize = 15.sp,
                 )
             }
         }
 
         V2SettingsSection(
             backdrop,
-            "DIAGNOSTICS",
+            "诊断",
             "错误日志",
             Icons.Rounded.FolderOpen,
             Modifier.fillMaxWidth(),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("frontend.log · 界面与启动错误    backend.log · 后端运行输出", color = V2Text, fontSize = 11.sp)
-                    Text(StartupDiagnostics.logDirectory().absolutePath, color = V2Muted, fontSize = 10.sp)
+                    Text("界面日志与后台日志", color = V2Text, fontSize = 15.sp)
+                    Text(StartupDiagnostics.logDirectory().absolutePath, color = V2Muted, fontSize = 14.sp)
                 }
                 V2ActionButton("打开日志文件夹", Icons.Rounded.FolderOpen, false) {
                     StartupDiagnostics.openLogDirectory()
@@ -2223,30 +2225,30 @@ private fun V2SettingsPage(
                 }
             }
             if (diagnosticsMessage.isNotBlank()) {
-                Text(diagnosticsMessage, color = V2Muted, fontSize = 10.sp)
+                Text(diagnosticsMessage, color = V2Muted, fontSize = 14.sp)
             }
         }
 
         V2SettingsSection(
             backdrop,
-            "SOFTWARE UPDATE",
+            "软件更新",
             "软件更新",
             Icons.Rounded.CheckCircle,
             Modifier.fillMaxWidth(),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("当前版本 · v$GpuMonitorVersion", color = V2Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("当前版本 · v$GpuMonitorVersion", color = V2Text, fontSize = 16.sp, fontWeight = FontWeight.Normal)
                     Text(
-                        "从 github.com/byebabyblue/gpu-monitor 的 Releases 检查",
+                        "手动检查最新版本",
                         color = V2Muted,
-                        fontSize = 9.sp,
+                        fontSize = 13.sp,
                     )
                 }
                 V2ActionButton("立即检查", Icons.Rounded.Refresh, updateBusy, onCheckUpdate)
             }
             if (updateLastAttempt > 0) {
-                Text("上次检查：${java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date(updateLastAttempt))}", color = V2Muted, fontSize = 10.sp)
+                Text("上次检查：${java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date(updateLastAttempt))}", color = V2Muted, fontSize = 14.sp)
             }
             if (updateMessage.isNotBlank()) {
                 Text(
@@ -2256,10 +2258,9 @@ private fun V2SettingsPage(
                         updateMessage.startsWith("发现新版") -> V2Yellow
                         else -> V2Green
                     },
-                    fontSize = 10.sp,
+                    fontSize = 14.sp,
                 )
             }
-            Text("仅读取公开版本信息，不会上传服务器配置或其他本机数据。", color = V2Dim, fontSize = 9.sp)
         }
 
         V2GlassSurface(backdrop, Modifier.fillMaxWidth(), RoundedCornerShape(24.dp), tintAlpha = 0.20f) {
@@ -2268,28 +2269,27 @@ private fun V2SettingsPage(
                     Icon(Icons.Rounded.Add, null, tint = V2AccentStrong, modifier = Modifier.size(21.dp))
                     Spacer(Modifier.width(9.dp))
                     Column {
-                        Text("ADD SERVER", color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        Text("添加 SSH 服务器", color = V2Text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text("添加服务器", color = V2Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.weight(1f))
-                    Text("当前 $serverCount 台", color = V2Dim, fontSize = 11.sp)
+                    Text("当前 $serverCount 台", color = V2Dim, fontSize = 15.sp)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     V2Field(draft.name, { draft = draft.copy(name = it) }, "显示名称", Modifier.weight(1f))
-                    V2Field(draft.host, { draft = draft.copy(host = it) }, "地址 / IP", Modifier.weight(1.2f))
-                    V2Field(draft.port, { draft = draft.copy(port = it.filter(Char::isDigit).take(5)) }, "SSH 端口", Modifier.width(120.dp))
+                    V2Field(draft.host, { draft = draft.copy(host = it) }, "服务器地址", Modifier.weight(1.2f))
+                    V2Field(draft.port, { draft = draft.copy(port = it.filter(Char::isDigit).take(5)) }, "连接端口", Modifier.width(120.dp))
                     V2Field(draft.user, { draft = draft.copy(user = it) }, "用户名", Modifier.weight(0.8f))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     V2Field(draft.password, { draft = draft.copy(password = it) }, "密码（可留空）", Modifier.weight(1f), secret = true)
-                    V2Field(draft.keyFile, { draft = draft.copy(keyFile = it) }, "SSH 私钥路径（可选）", Modifier.weight(1.2f))
+                    V2Field(draft.keyFile, { draft = draft.copy(keyFile = it) }, "私钥路径（可选）", Modifier.weight(1.2f))
                     V2Field(draft.diskPath, { draft = draft.copy(diskPath = it) }, "监控硬盘路径", Modifier.weight(0.8f))
                     V2ActionButton("添加服务器", Icons.Rounded.Add, addBusy) {
                         if (draft.name.isNotBlank() && draft.host.isNotBlank() && draft.user.isNotBlank()) onAddServer(draft)
                     }
                 }
-                Text("密码仅写入本机 config.json；安全性要求高时建议使用 SSH 私钥。", color = V2Muted, fontSize = 9.sp)
-                if (addMessage.isNotBlank()) Text(addMessage, color = if (addMessage.startsWith("添加失败")) V2Red else V2Green, fontSize = 11.sp)
+                Text("密码仅写入本机 config.json；安全性要求高时建议使用 SSH 私钥。", color = V2Muted, fontSize = 13.sp)
+                if (addMessage.isNotBlank()) Text(addMessage, color = if (addMessage.startsWith("添加失败")) V2Red else V2Green, fontSize = 15.sp)
             }
         }
 
@@ -2299,7 +2299,7 @@ private fun V2SettingsPage(
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("保存设置", color = V2Text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Text(saveMessage.ifBlank { "设置保存在 %APPDATA%\\Xerver\\config.json" }, color = V2Dim, fontSize = 10.sp)
+                    Text(saveMessage.ifBlank { "设置保存在 %APPDATA%\\Xerver\\config.json" }, color = V2Dim, fontSize = 14.sp)
                 }
                 V2ActionButton("保存并应用", Icons.Rounded.Save, saveBusy) {
                     val networkInterval = networkHours.toIntOrNull()
@@ -2347,8 +2347,7 @@ private fun V2SettingsSection(
                 Icon(icon, null, tint = V2AccentStrong, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(9.dp))
                 Column {
-                    Text(eyebrow, color = V2Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    Text(title, color = V2Text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text(title, color = V2Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 }
             }
             content()
@@ -2362,12 +2361,12 @@ private fun V2IntervalRow(
     label: String,
     selected: Int,
     options: List<Int>,
-    suffix: String = "s",
+    suffix: String = "秒",
     displayLabels: List<String>? = null,
     onSelected: (Int) -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = V2Dim, fontSize = 11.sp, modifier = Modifier.width(74.dp))
+        Text(label, color = V2Dim, fontSize = 15.sp, modifier = Modifier.width(110.dp))
         V2SegmentedSlider(
             backdrop = backdrop,
             labels = displayLabels?.takeIf { it.size == options.size }
@@ -2389,7 +2388,7 @@ private fun V2ActionButton(label: String, icon: ImageVector, busy: Boolean, onCl
     ) {
         Icon(if (busy) Icons.Rounded.Refresh else icon, null, tint = if (busy) V2Muted else V2Accent, modifier = Modifier.size(17.dp))
         Spacer(Modifier.width(7.dp))
-        Text(if (busy) "请稍候" else label, color = if (busy) V2Muted else V2Text, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Text(if (busy) "请稍候" else label, color = if (busy) V2Muted else V2Text, fontSize = 15.sp, fontWeight = FontWeight.Normal)
     }
 }
 
@@ -2404,9 +2403,10 @@ private fun V2Field(
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text(label, fontSize = 10.sp) },
+        label = { Text(label, fontSize = 14.sp) },
         modifier = modifier,
         singleLine = true,
+        textStyle = XerverTextStyle.copy(fontSize = 16.sp, color = V2Text),
         visualTransformation = if (secret) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
         colors = TextFieldDefaults.outlinedTextFieldColors(
             textColor = V2Text,
@@ -2423,7 +2423,7 @@ private fun V2Field(
 @Composable
 private fun V2EmptyState(message: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(message, color = V2Muted, fontSize = 13.sp)
+        Text(message, color = V2Muted, fontSize = 16.sp)
     }
 }
 

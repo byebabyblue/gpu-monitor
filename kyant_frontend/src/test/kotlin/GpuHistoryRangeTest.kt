@@ -22,10 +22,10 @@ class GpuHistoryRangeTest {
 
     @Test
     fun supportsEveryGpuHistoryRangeLabel() {
-        assertEquals("15min", gpuHistoryRangeLabel(15))
-        assertEquals("1h", gpuHistoryRangeLabel(60))
-        assertEquals("6h", gpuHistoryRangeLabel(6 * 60))
-        assertEquals("24h", gpuHistoryRangeLabel(24 * 60))
+        assertEquals("15分钟", gpuHistoryRangeLabel(15))
+        assertEquals("1小时", gpuHistoryRangeLabel(60))
+        assertEquals("6小时", gpuHistoryRangeLabel(6 * 60))
+        assertEquals("24小时", gpuHistoryRangeLabel(24 * 60))
     }
 
     @Test

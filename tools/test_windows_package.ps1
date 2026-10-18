@@ -86,13 +86,16 @@ try {
     if (-not $ready) { throw "Packaged startup did not become ready. $lastFailure Logs: $runDirectory" }
     # Exercise a normal Settings save that carries an unchanged autostart
     # preference, as the frontend does. It must not register this test copy.
-    $settingsPayload = @{ ui = @{ autostart = [bool]$AutostartEnabled; font_scale = 1.02 } } | ConvertTo-Json -Depth 3
+    $settingsPayload = @{ ui = @{ autostart = [bool]$AutostartEnabled; font_scale = 1.82 } } | ConvertTo-Json -Depth 3
     $saved = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/settings" -Method Post `
         -Body $settingsPayload -ContentType 'application/json' -NoProxy -TimeoutSec 5
     if (-not $saved.ok) { throw 'Could not save ordinary settings in the isolated test profile' }
     $networkPayload = @{ settings = @{ network_interval_hours = 168 } } | ConvertTo-Json -Depth 3
     $networkSaved = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/settings" -Method Post -Body $networkPayload -ContentType 'application/json' -NoProxy -TimeoutSec 5
     $persisted = Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
+    if ($persisted.ui.font_scale -ne 1.82 -or $networkSaved.config.ui.font_scale -ne 1.82) {
+        throw 'The enlarged font scale did not persist in the packaged backend'
+    }
     if ($networkSaved.config.settings.network_interval_hours -ne 168 -or $persisted.settings.network_interval_hours -ne 168) {
         throw 'Network interval did not persist in the packaged backend'
     }

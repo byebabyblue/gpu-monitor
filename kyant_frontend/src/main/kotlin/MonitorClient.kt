@@ -159,7 +159,7 @@ internal data class UiSettings(
     val topBarBlurLevel: Int = BlurLevelMedium,
     val bottomBarBlurLevel: Int = BlurLevelMedium,
     val glassTint: String = "clear",
-    val fontScale: Double = 1.08,
+    val fontScale: Double = 1.35,
     val hiddenServers: List<String> = emptyList(),
     val rememberWindowBounds: Boolean = false,
     val trayLightweightEnabled: Boolean = false,
@@ -503,7 +503,7 @@ internal object MonitorClient {
                     legacyEnabled = ui.booleanValue("bottom_bar_blur", true),
                 ),
                 glassTint = ui.stringValue("glass_tint", "clear"),
-                fontScale = ui.doubleValue("font_scale", 1.08).coerceIn(0.90, 1.35),
+                fontScale = ui.doubleValue("font_scale", 1.35).coerceIn(0.90, 1.85),
                 hiddenServers = ui.arrayValue("hidden_servers").mapNotNull { element ->
                     runCatching { element.asString.trim() }.getOrNull()?.takeIf { it.isNotBlank() }
                 }.distinct(),
