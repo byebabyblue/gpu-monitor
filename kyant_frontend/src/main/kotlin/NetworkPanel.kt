@@ -26,13 +26,13 @@ internal fun V2NetworkPanel(backdrop: Backdrop, server: MonitorServer) {
     val warning = if (darkText) Color(0xFF915B00) else V2Yellow
     val bad = if (darkText) Color(0xFFB51F43) else V2Red
     val age = (System.currentTimeMillis() / 1000.0 - server.networkCheckedAt).coerceAtLeast(0.0)
-    val stale = !server.connected || age > 120
+    val stale = !server.connected || System.currentTimeMillis() / 1000.0 > (server.networkNextCheckAt.takeIf { it > 0 } ?: (server.networkCheckedAt + 24 * 3600))
     V2GlassSurface(backdrop, Modifier.fillMaxWidth(), RoundedCornerShape(24.dp)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("网络连通性", color = V2Text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("从 ${server.name} 发起 · 每 60 秒检测 · HTTPS 包含 DNS / TLS", color = V2Dim, fontSize = 10.sp)
+                    Text("同一服务器地址共享结果 · 刷新间隔可在设置中调整", color = V2Dim, fontSize = 10.sp)
                 }
                 Text(
                     if (server.networkCheckedAt == 0.0) "等待首轮检测"

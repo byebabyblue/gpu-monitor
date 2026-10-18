@@ -48,3 +48,6 @@ GPU-Monitor-Kyant-Portable/frontend/
 *.lnk
 Thumbs.db
 Desktop.ini
+
+network-cache.json
+network-cache.tmp

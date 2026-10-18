@@ -100,6 +100,7 @@ internal data class MonitorServer(
     val network: List<NetworkProbe> = emptyList(),
     val networkCheckedAt: Double = 0.0,
     val networkError: String = "",
+    val networkNextCheckAt: Double = 0.0,
 ) {
     val isShowcase: Boolean get() = status == "showcase"
     val averageGpuPercent: Double
@@ -145,6 +146,7 @@ internal data class PollSettings(
     val processSeconds: Int = 6,
     val idleThresholdSeconds: Int = 600,
     val apiPort: Int = DefaultApiPort,
+    val networkIntervalHours: Int = 24,
 )
 
 internal data class UiSettings(
@@ -163,7 +165,6 @@ internal data class UiSettings(
     val trayLightweightEnabled: Boolean = false,
     val trayLightweightDelayMinutes: Int = DefaultTrayLightweightDelayMinutes,
     val gpuHistoryRangeMinutes: Int = DefaultGpuHistoryRangeMinutes,
-    val updateCheckIntervalHours: Int = DefaultUpdateCheckIntervalHours,
     val windowBounds: MonitorWindowBounds? = null,
 )
 
@@ -254,6 +255,17 @@ internal object MonitorClient {
         request(port, "POST", "/api/host-key-prompts/$encoded", body)
     }
 
+    fun saveNetworkInterval(port: Int, hours: Int): Result<Unit> = runCatching {
+        require(hours in 12..168)
+        val settings = JsonObject().apply { addProperty("network_interval_hours", hours) }
+        request(port, "POST", "/api/settings", JsonObject().apply { add("settings", settings) })
+    }
+
+    fun refreshNetwork(port: Int, name: String = ""): Result<Int> = runCatching {
+        val body = JsonObject().apply { addProperty("name", name) }
+        request(port, "POST", "/api/network/refresh", body).asJsonObject.intValue("scheduled")
+    }
+
     fun saveSettings(
         currentPort: Int,
         polling: PollSettings,
@@ -264,12 +276,12 @@ internal object MonitorClient {
             addProperty("gpu_idle_interval", polling.gpuIdleSeconds)
             addProperty("disk_interval", polling.diskSeconds)
             addProperty("process_interval", polling.processSeconds)
+            addProperty("network_interval_hours", polling.networkIntervalHours)
             addProperty("idle_threshold", polling.idleThresholdSeconds)
             addProperty("api_port", polling.apiPort)
         }
         val uiObject = JsonObject().apply {
             addProperty("wallpaper_path", ui.wallpaperPath)
-            addProperty("update_check_interval_hours", normalizeUpdateCheckIntervalHours(ui.updateCheckIntervalHours))
             addProperty("default_page", ui.defaultPage)
             addProperty("autostart", ui.autostart)
             addProperty("start_minimized_to_tray", ui.startMinimizedToTray)
@@ -440,6 +452,7 @@ internal object MonitorClient {
             },
             networkCheckedAt = obj.doubleValue("network_checked_at"),
             networkError = obj.stringValue("network_error"),
+            networkNextCheckAt = obj.doubleValue("network_next_check_at"),
         )
     }
 
@@ -464,11 +477,11 @@ internal object MonitorClient {
                 gpuIdleSeconds = settings.intValue("gpu_idle_interval", 60),
                 diskSeconds = settings.intValue("disk_interval", 21600),
                 processSeconds = settings.intValue("process_interval", 6),
+                networkIntervalHours = settings.intValue("network_interval_hours", 24).coerceIn(12, 168),
                 idleThresholdSeconds = settings.intValue("idle_threshold", 600),
                 apiPort = settings.intValue("api_port", DefaultApiPort),
             ),
             ui = UiSettings(
-                updateCheckIntervalHours = normalizeUpdateCheckIntervalHours(ui.intValue("update_check_interval_hours", DefaultUpdateCheckIntervalHours)),
                 wallpaperPath = ui.stringValue("wallpaper_path"),
                 defaultPage = ui.stringValue("default_page", "home"),
                 autostart = ui.booleanValue("autostart"),

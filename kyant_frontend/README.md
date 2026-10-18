@@ -44,19 +44,21 @@ The application and installer use `src/main/resources/app-icon.png` and
 `https://github.com/byebabyblue/gpu-monitor/releases` in Settings. The check
 only reads public GitHub release metadata; it does not upload local settings.
 
-The current release build is `1.2.1`. See the
-[release notes](../docs/releases/v1.2.1.md) for changes.
+This local build is `1.2.2`, based on 1.2.1 with the original interface.
+See the [build notes](../docs/releases/v1.2.2.md) for changes.
 
-Settings supports automatic update checks every 12–168 hours (default: 24).
-The last attempt is stored locally, including failures, so restarting does not
-repeat checks. “立即检查” performs a manual check regardless of that interval.
-If the release API is unavailable, a public latest-release redirect is used.
+Software update checks are manual. Settings keeps the “立即检查” button and
+the public latest-release fallback; no update interval is stored or scheduled.
 
 Node now shows network probes originating on each remote GPU server: Baidu,
 GitHub, Tsinghua PyPI, and the official PyTorch wheel index. ICMP ping and HTTPS
 are reported separately. The remote host needs `ping` and `curl`; unavailable
-tools are shown explicitly. Probes run concurrently in a background worker once
-per minute with bounded timeouts and retain normal TLS certificate validation.
+tools are shown explicitly. Settings → 网络检测 provides a 12–168 hour automatic
+interval (default: 24), “保存间隔”, and “立即检测”. One detection round per server
+address is shared across nodes, including different SSH ports/users. In-flight
+requests are coalesced, and cached results survive application restarts. The
+shared-result scope is shown in the network card. Background probes retain
+bounded timeouts and normal TLS certificate validation.
 HTTPS timing includes DNS, connection, TLS, and the response, not throughput.
 
 GPU utilization and VRAM charts share the selected time range and a pause/resume

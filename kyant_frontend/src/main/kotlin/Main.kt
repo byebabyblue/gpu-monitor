@@ -433,12 +433,6 @@ private fun runMonitorApplication() {
         }
         val backendScope = rememberCoroutineScope()
         val updateController = remember { AppUpdateController(backendScope, MonitorInstallation.configFile()) }
-        LaunchedEffect(updateController.intervalHours) {
-            while (true) {
-                updateController.checkIfDue()
-                delay(60_000)
-            }
-        }
         val startMinimizedToTray = remember { MonitorInstallation.startMinimizedToTray() }
         var windowVisible by remember {
             mutableStateOf(!(startMinimizedToTray && traySupported))

@@ -90,6 +90,17 @@ try {
     $saved = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/settings" -Method Post `
         -Body $settingsPayload -ContentType 'application/json' -NoProxy -TimeoutSec 5
     if (-not $saved.ok) { throw 'Could not save ordinary settings in the isolated test profile' }
+    $networkPayload = @{ settings = @{ network_interval_hours = 168 } } | ConvertTo-Json -Depth 3
+    $networkSaved = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/settings" -Method Post -Body $networkPayload -ContentType 'application/json' -NoProxy -TimeoutSec 5
+    $persisted = Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
+    if ($networkSaved.config.settings.network_interval_hours -ne 168 -or $persisted.settings.network_interval_hours -ne 168) {
+        throw 'Network interval did not persist in the packaged backend'
+    }
+    if ('update_check_interval_hours' -in $networkSaved.config.ui.PSObject.Properties.Name) {
+        throw 'Obsolete software update interval is still exposed'
+    }
+    $refresh = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/network/refresh" -Method Post -Body '{}' -ContentType 'application/json' -NoProxy -TimeoutSec 5
+    if (-not $refresh.ok -or $refresh.scheduled -ne 0) { throw 'Manual network refresh failed for the isolated profile' }
     $stableUntil = [DateTime]::UtcNow.AddSeconds($StabilitySeconds)
     while ([DateTime]::UtcNow -lt $stableUntil) {
         $null = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/config" -NoProxy -TimeoutSec 2

@@ -5,7 +5,8 @@
     "disk_interval": 21600,
     "process_interval": 6,
     "idle_threshold": 600,
-    "api_port": 8766
+    "api_port": 8766,
+    "network_interval_hours": 24
   },
   "ui": {
     "wallpaper_path": "",
@@ -21,8 +22,7 @@
     "remember_window_bounds": false,
     "tray_lightweight_enabled": false,
     "tray_lightweight_delay_minutes": 5,
-    "gpu_history_range_minutes": 1440,
-    "update_check_interval_hours": 24
+    "gpu_history_range_minutes": 1440
   },
   "servers": [
     {

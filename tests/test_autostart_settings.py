@@ -12,17 +12,26 @@ from gpu_dashboard_kyant import Dashboard, RefreshSettings
 
 
 class AutostartSettingsTest(unittest.TestCase):
-    def test_update_interval_accepts_only_12_to_168_integer_hours(self):
-        for hours in (12, 24, 36, 168):
-            state = self.state(False)
-            Dashboard._api_update_settings(state, {"ui": {"update_check_interval_hours": hours}})
-            self.assertEqual(hours, state._cfg["ui"]["update_check_interval_hours"])
-        for hours in (0, 11, 169, True, 12.5, "24"):
-            with self.subTest(hours=hours):
+    def test_network_interval_accepts_only_12_to_168_integer_hours(self):
+        original = RefreshSettings.network_interval_hours
+        try:
+            for hours in (12, 24, 36, 168):
+                state = self.state(False)
+                Dashboard._api_update_settings(state, {"settings": {"network_interval_hours": hours}})
+                self.assertEqual(hours, state._cfg["settings"]["network_interval_hours"])
+            for hours in (0, 11, 169, True, 12.5, "24"):
                 state = self.state(False)
                 with self.assertRaises(ValueError):
-                    Dashboard._api_update_settings(state, {"ui": {"update_check_interval_hours": hours}})
+                    Dashboard._api_update_settings(state, {"settings": {"network_interval_hours": hours}})
                 state._save_config.assert_not_called()
+        finally:
+            RefreshSettings.network_interval_hours = original
+
+    def test_legacy_software_update_interval_is_removed_when_saving(self):
+        state = self.state(False)
+        state._cfg['ui']['update_check_interval_hours'] = 12
+        Dashboard._api_update_settings(state, {'ui': {'update_check_interval_hours': 168}})
+        self.assertNotIn('update_check_interval_hours', state._cfg['ui'])
 
     def state(self, enabled):
         return SimpleNamespace(

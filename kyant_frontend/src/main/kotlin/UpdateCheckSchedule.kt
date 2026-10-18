@@ -3,22 +3,13 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
-internal const val DefaultUpdateCheckIntervalHours = 24
-internal fun normalizeUpdateCheckIntervalHours(hours: Int): Int = hours.coerceIn(12, 168)
-
-/** Persists attempts, including failed requests, so restarts cannot flood GitHub. */
+/** Stores the last manual check time for display. No automatic update schedule. */
 internal class UpdateCheckSchedule(private val stateFile: File) {
     private var lastAttempt = runCatching { stateFile.readText().trim().toLong() }
         .getOrDefault(0L).coerceAtLeast(0L)
 
     @Synchronized
     fun lastAttemptMillis(): Long = lastAttempt
-
-    @Synchronized
-    fun isDue(hours: Int, nowMillis: Long = System.currentTimeMillis()): Boolean {
-        val interval = normalizeUpdateCheckIntervalHours(hours) * 3_600_000L
-        return lastAttempt == 0L || nowMillis < lastAttempt || nowMillis - lastAttempt >= interval
-    }
 
     @Synchronized
     fun recordAttempt(nowMillis: Long = System.currentTimeMillis()): Result<Unit> {

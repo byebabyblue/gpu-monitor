@@ -24,42 +24,14 @@ class UpdateCheckScheduleTest {
     }
 
     @Test
-    fun intervalBoundsAndDefaultAreSupported() {
-        assertEquals(24, UiSettings().updateCheckIntervalHours)
-        assertEquals(12, normalizeUpdateCheckIntervalHours(1))
-        assertEquals(168, normalizeUpdateCheckIntervalHours(500))
-        assertEquals(36, normalizeUpdateCheckIntervalHours(36))
-    }
-
-    @Test
-    fun attemptsPersistAcrossRestartsAndDoNotRetryBeforeTheInterval() {
-        val directory = Files.createTempDirectory("xerver-update-schedule").toFile()
+    fun manualCheckTimesPersistAcrossRestarts() {
+        val directory = Files.createTempDirectory("xerver-update-state").toFile()
         try {
             val file = directory.resolve("update.timestamp")
-            val now = 1_800_000_000_000L
-            val schedule = UpdateCheckSchedule(file)
-            assertTrue(schedule.isDue(24, now))
-            schedule.recordAttempt(now).getOrThrow()
-            val restarted = UpdateCheckSchedule(file)
-            assertFalse(restarted.isDue(12, now + 12 * 3_600_000L - 1))
-            assertTrue(restarted.isDue(12, now + 12 * 3_600_000L))
-            assertFalse(restarted.isDue(168, now + 167 * 3_600_000L))
-            assertTrue(restarted.isDue(168, now + 168 * 3_600_000L))
-            // Manual checks bypass isDue and update the next automatic deadline.
-            restarted.recordAttempt(now + 1000).getOrThrow()
-            assertEquals(now + 1000, UpdateCheckSchedule(file).lastAttemptMillis())
-        } finally { directory.deleteRecursively() }
-    }
-
-    @Test
-    fun failedPersistenceStillLimitsRequestsInThisSessionAndClockRollbackRecovers() {
-        val directory = Files.createTempDirectory("xerver-update-failure").toFile()
-        try {
-            val blocked = directory.resolve("blocked").apply { writeText("file") }
-            val schedule = UpdateCheckSchedule(blocked.resolve("state"))
-            assertTrue(schedule.recordAttempt(10000).isFailure)
-            assertFalse(schedule.isDue(12, 11000))
-            assertTrue(schedule.isDue(12, 9000))
+            val state = UpdateCheckSchedule(file)
+            assertEquals(0L, state.lastAttemptMillis())
+            state.recordAttempt(10000L).getOrThrow()
+            assertEquals(10000L, UpdateCheckSchedule(file).lastAttemptMillis())
         } finally { directory.deleteRecursively() }
     }
 

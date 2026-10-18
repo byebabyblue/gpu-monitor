@@ -1,7 +1,6 @@
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.google.gson.JsonParser
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -18,24 +17,12 @@ internal class AppUpdateController(
 ) {
     private val schedule = UpdateCheckSchedule(configFile.absoluteFile.parentFile.resolve("update-check.timestamp"))
     private val inFlight = AtomicBoolean(false)
-    var intervalHours by mutableStateOf(runCatching {
-        JsonParser.parseString(configFile.readText()).asJsonObject
-            .getAsJsonObject("ui")?.get("update_check_interval_hours")?.asInt
-            ?.let(::normalizeUpdateCheckIntervalHours) ?: DefaultUpdateCheckIntervalHours
-    }.getOrDefault(DefaultUpdateCheckIntervalHours))
-        private set
     var busy by mutableStateOf(false)
         private set
     var message by mutableStateOf("")
     var release by mutableStateOf<GpuMonitorRelease?>(null)
     var lastAttemptMillis by mutableStateOf(schedule.lastAttemptMillis())
         private set
-
-    fun setInterval(hours: Int) { intervalHours = normalizeUpdateCheckIntervalHours(hours) }
-
-    fun checkIfDue() {
-        if (schedule.isDue(intervalHours, clock())) check(false)
-    }
 
     fun check(manual: Boolean) {
         if (!inFlight.compareAndSet(false, true)) return

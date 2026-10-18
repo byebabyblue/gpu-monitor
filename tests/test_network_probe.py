@@ -1,11 +1,110 @@
 import threading
+import tempfile
+import time
+from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
-from network_probe import TARGETS, parse_probe, probe_command
+from network_probe import TARGETS, parse_probe, probe_command, NetworkProbeCache
 from gpu_dashboard_kyant import DataCollector, ServerInfo
 
 
 class NetworkProbeTest(unittest.TestCase):
+    def test_cache_coalesces_concurrent_and_manual_checks_and_survives_restart(self):
+        cache = NetworkProbeCache()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'network-cache.json'
+            cache.configure(path)
+            stopped = threading.Event()
+            entered = threading.Event()
+            release = threading.Event()
+            requested_at = time.time()
+            def operation():
+                entered.set()
+                release.wait(2)
+                return ([{'ping_status': 'ok'}], time.time(), '')
+            operation_mock = Mock(side_effect=operation)
+            results = []
+            def run(force):
+                results.append(cache.run('key', 'host', 43200, requested_at, force, stopped, operation_mock))
+            first = threading.Thread(target=run, args=(False,))
+            second = threading.Thread(target=run, args=(True,))
+            first.start()
+            self.assertTrue(entered.wait(1))
+            second.start()
+            release.set()
+            first.join(3)
+            second.join(3)
+            self.assertEqual(1, operation_mock.call_count)
+            self.assertEqual(results[0], results[1])
+            # A duplicate alias can consume the same click after the first job finished.
+            cache.run('key', 'host', 43200, requested_at, True, stopped, operation_mock)
+            self.assertEqual(1, operation_mock.call_count)
+            restored = NetworkProbeCache()
+            restored.configure(path)
+            restored.run('key', 'host', 43200, time.time(), False, stopped, operation_mock)
+            self.assertEqual(1, operation_mock.call_count)
+            # A later explicit click is allowed even before the automatic interval.
+            restored.run('key', 'host', 43200, time.time(), True, stopped, operation_mock)
+            self.assertEqual(2, operation_mock.call_count)
+
+    def test_failed_round_is_cached_too_and_does_not_trigger_alias_retries(self):
+        cache = NetworkProbeCache()
+        stopped = threading.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'network-cache.json'
+            cache.configure(path)
+            requested = time.time()
+            operation = Mock(return_value=([], time.time(), '网络检测失败'))
+            cache.run('same-ip', '203.0.113.100', 43200, requested, False, stopped, operation)
+            cache.run('same-ip', '203.0.113.100', 43200, requested, True, stopped, operation)
+            self.assertEqual(1, operation.call_count)
+            restored = NetworkProbeCache()
+            restored.configure(path)
+            restored.run('same-ip', '203.0.113.100', 43200, time.time(), False, stopped, operation)
+            self.assertEqual(1, operation.call_count)
+
+    def test_same_ip_shares_results_across_ports_users_and_host_keys(self):
+        base = dict(host='203.0.113.1', port=22, user='a')
+        key, host = NetworkProbeCache.identity(SimpleNamespace(**base))
+        for change in ({'port': 2222}, {'user': 'b'}, {'key_file': '/other/key'}):
+            self.assertEqual((key, host), NetworkProbeCache.identity(SimpleNamespace(**(base | change))))
+        self.assertNotEqual(key, NetworkProbeCache.identity(SimpleNamespace(host='203.0.113.2'))[0])
+        self.assertEqual(NetworkProbeCache.identity(SimpleNamespace(host='[2001:db8::1]')),
+                         NetworkProbeCache.identity(SimpleNamespace(host='2001:0db8:0000::1')))
+
+    def test_different_ssh_connections_on_one_ip_execute_only_one_probe(self):
+        from network_probe import NETWORK_PROBES
+        NETWORK_PROBES.configure(None)
+        first = Mock(host='203.0.113.90', port=22, user='a')
+        second = Mock(host='203.0.113.90', port=2222, user='b')
+        first.probe_connection.return_value.exec.return_value = 'baidu\t1\t200 0.01'
+        second.probe_connection.return_value.exec.return_value = 'baidu\t2\t200 0.02'
+        collectors = [DataCollector(first), DataCollector(second)]
+        requested = time.time()
+        for collector in collectors:
+            collector.request_network_refresh(requested)
+        info = [ServerInfo('one'), ServerInfo('two')]
+        collectors[0]._refresh_network(info[0])
+        collectors[0]._network_worker.join(3)
+        # Consume the second alias only after the first completed: still one click.
+        collectors[1]._refresh_network(info[1])
+        collectors[1]._network_worker.join(3)
+        for collector, snapshot in zip(collectors, info): collector._refresh_network(snapshot)
+        self.assertEqual(1, first.probe_connection.return_value.exec.call_count)
+        self.assertEqual(0, second.probe_connection.call_count)
+        self.assertEqual(info[0].network, info[1].network)
+        NETWORK_PROBES.configure(None)
+
+    def test_stopped_probe_never_opens_a_connection_or_caches_a_new_result(self):
+        cache = NetworkProbeCache()
+        stopped = threading.Event()
+        stopped.set()
+        operation = Mock()
+        cache.run('key', 'host', 43200, time.time(), True, stopped, operation)
+        operation.assert_not_called()
+        self.assertIsNone(cache.cached('key')[1])
+
     def test_ping_and_https_are_independent(self):
         results = parse_probe('baidu\ttimeout\t200 0.123\ngithub\t10.5\t403 0.25\nmirror\tunavailable\tunavailable\npytorch\t8\t000 4.0')
         self.assertEqual('timeout', results[0]['ping_status'])

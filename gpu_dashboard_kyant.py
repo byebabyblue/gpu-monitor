@@ -34,7 +34,7 @@ Config (config.json):
 from backend_diagnostics import install_backend_diagnostics, logger as backend_logger
 from windows_autostart import update_autostart
 from gpu_history import append_sample, history_points, RANGE_BUCKET_SECONDS
-from network_probe import probe_command, parse_probe
+from network_probe import probe_command, parse_probe, NETWORK_PROBES
 
 if __name__ == "__main__":
     install_backend_diagnostics()
@@ -118,6 +118,7 @@ class RefreshSettings:
     gpu_idle_interval = 60
     disk_interval = 21600
     process_interval = 6
+    network_interval_hours = 24
     idle_threshold = 600  # 10 min before slow polling
     _config_path = None
 
@@ -145,6 +146,7 @@ class RefreshSettings:
         cls.process_interval = cls._bounded_number(
             s.get("process_interval", 6), 6, 2, 300
         )
+        cls.network_interval_hours = int(cls._bounded_number(s.get("network_interval_hours", 24), 24, 12, 168))
         cls.idle_threshold = cls._bounded_number(
             s.get("idle_threshold", 600), 600, 30, 86400
         )
@@ -166,6 +168,7 @@ class RefreshSettings:
             "gpu_idle_interval":   cls.gpu_idle_interval,
             "disk_interval":       cls.disk_interval,
             "process_interval":    cls.process_interval,
+            "network_interval_hours": cls.network_interval_hours,
             "idle_threshold":      cls.idle_threshold,
         })
         cfg["settings"] = settings
@@ -618,10 +621,19 @@ BEGIN {
         self._gpu_pids: set[str] = set()
         self._network_lock = Lock()
         self._network_worker = None
-        self._next_network_poll = 0.0
         self._network_result = ([], None, "")
         self._network_stopped = threading.Event()
         self._probe_ssh = None
+        self._network_force = threading.Event()
+        self._network_force_at = 0.0
+        self._network_key, self._network_host = NETWORK_PROBES.identity(ssh)
+
+    def request_network_refresh(self, requested_at=None):
+        with self._network_lock:
+            if ((self._network_worker is None or not self._network_worker.is_alive())
+                    and not self._network_force.is_set()):
+                self._network_force_at = requested_at if requested_at is not None else time.time()
+                self._network_force.set()
 
     def stop_network(self):
         self._network_stopped.set()
@@ -633,16 +645,23 @@ BEGIN {
     def _refresh_network(self, info):
         if self._network_stopped.is_set():
             return
-        # A slow/blocked endpoint must never hold up CPU/GPU collection.
+        interval = RefreshSettings.network_interval_hours * 3600
+        cached = NETWORK_PROBES.cached(self._network_key)
         with self._network_lock:
+            if cached[1] and (not self._network_result[1] or cached[1] >= self._network_result[1]):
+                self._network_result = cached
             info.network, info.network_checked_at, info.network_error = self._network_result
-        if time.monotonic() < self._next_network_poll:
-            return
         if self._network_worker is not None and self._network_worker.is_alive():
             return
-        self._next_network_poll = time.monotonic() + 60
+        with self._network_lock:
+            force = self._network_force.is_set()
+            forced_at = self._network_force_at
+        if not force and info.network_checked_at and time.time() < info.network_checked_at + interval:
+            return
+        self._network_force.clear()
+        requested_at = forced_at if force else time.time()
 
-        def probe():
+        def perform_probe():
             probe_ssh = None
             try:
                 probe_ssh = self.ssh.probe_connection()
@@ -660,6 +679,11 @@ BEGIN {
                     probe_ssh.disconnect()
                 with self._network_lock:
                     self._probe_ssh = None
+            return result
+
+        def probe():
+            result = NETWORK_PROBES.run(self._network_key, self._network_host, interval,
+                requested_at, force, self._network_stopped, perform_probe)
             with self._network_lock:
                 if not self._network_stopped.is_set():
                     self._network_result = result
@@ -1965,6 +1989,7 @@ class Dashboard(QMainWindow):
         self._interval = self._cfg.get("refresh_interval", 3)
         RefreshSettings._config_path = str(cfg_path) if not demo else None
         RefreshSettings.load(self._cfg)
+        NETWORK_PROBES.configure(Path(cfg_path).parent / "network-cache.json" if not demo else None)
 
         # ── load task notes (pattern → description mapping) ───────────
         self._task_notes: list[tuple[str, str]] = []  # [(pattern, note), ...]
@@ -3576,11 +3601,6 @@ class Dashboard(QMainWindow):
             tray_lightweight_delay_minutes = 5
         tray_lightweight_delay_minutes = max(1, min(1440, tray_lightweight_delay_minutes))
         try:
-            update_check_interval_hours = int(ui.get("update_check_interval_hours", 24))
-        except (TypeError, ValueError):
-            update_check_interval_hours = 24
-        update_check_interval_hours = max(12, min(168, update_check_interval_hours))
-        try:
             gpu_history_range_minutes = int(
                 ui.get("gpu_history_range_minutes", 1440)
             )
@@ -3629,6 +3649,7 @@ class Dashboard(QMainWindow):
                 "gpu_idle_interval": RefreshSettings.gpu_idle_interval,
                 "disk_interval": RefreshSettings.disk_interval,
                 "process_interval": RefreshSettings.process_interval,
+                "network_interval_hours": RefreshSettings.network_interval_hours,
                 "idle_threshold": RefreshSettings.idle_threshold,
                 "api_port": int(settings.get("api_port", self._api_port)),
             },
@@ -3648,7 +3669,6 @@ class Dashboard(QMainWindow):
                 "tray_lightweight_enabled": bool(ui.get("tray_lightweight_enabled", False)),
                 "tray_lightweight_delay_minutes": tray_lightweight_delay_minutes,
                 "gpu_history_range_minutes": gpu_history_range_minutes,
-                "update_check_interval_hours": update_check_interval_hours,
                 "window_bounds": window_bounds,
             },
             "servers": servers,
@@ -3685,6 +3705,8 @@ class Dashboard(QMainWindow):
             payload = request.get("payload") or {}
             if action == "update_settings":
                 result.update(self._api_update_settings(payload))
+            elif action == "refresh_network":
+                result.update(self._api_refresh_network(payload))
             elif action == "add_server":
                 result.update(self._api_add_server(payload))
             elif action == "remove_server":
@@ -3705,11 +3727,17 @@ class Dashboard(QMainWindow):
         if not isinstance(settings_payload, dict):
             raise ValueError("settings must be an object")
 
+        if "network_interval_hours" in settings_payload:
+            value = settings_payload["network_interval_hours"]
+            if isinstance(value, bool) or not isinstance(value, int) or not 12 <= value <= 168:
+                raise ValueError("网络检测间隔须为12至168之间的整数小时")
+
         numeric_fields = {
             "gpu_active_interval": (3, 1, 300),
             "gpu_idle_interval": (60, 5, 3600),
             "disk_interval": (21600, 5, 86400),
             "process_interval": (6, 2, 300),
+            "network_interval_hours": (24, 12, 168),
             "idle_threshold": (600, 30, 86400),
         }
         settings = self._cfg.get("settings", {})
@@ -3814,11 +3842,7 @@ class Dashboard(QMainWindow):
             if not 1 <= tray_lightweight_delay_minutes <= 1440:
                 raise ValueError("Tray lightweight delay must be between 1 and 1440 minutes")
             ui["tray_lightweight_delay_minutes"] = tray_lightweight_delay_minutes
-        if "update_check_interval_hours" in ui_payload:
-            value = ui_payload["update_check_interval_hours"]
-            if isinstance(value, bool) or not isinstance(value, int) or not 12 <= value <= 168:
-                raise ValueError("Update check interval must be an integer between 12 and 168 hours")
-            ui["update_check_interval_hours"] = value
+        ui.pop("update_check_interval_hours", None)
         if "gpu_history_range_minutes" in ui_payload:
             try:
                 gpu_history_range_minutes = int(ui_payload["gpu_history_range_minutes"])
@@ -3965,6 +3989,21 @@ class Dashboard(QMainWindow):
             },
         }
 
+    def _api_refresh_network(self, payload):
+        name = str(payload.get("name", ""))
+        if name and name not in self._threads:
+            raise ValueError("未找到服务器")
+        targets = [self._threads[name]] if name else list(self._threads.values())
+        scheduled = 0
+        requested_at = time.time()
+        for thread in targets:
+            collector = getattr(thread, "collector", None)
+            info = getattr(thread, "info", None)
+            if collector is not None and info is not None and info.connected:
+                collector.request_network_refresh(requested_at)
+                scheduled += 1
+        return {"ok": True, "scheduled": scheduled}
+
     def _api_remove_server(self, name):
         if not name or name not in self._servers:
             raise ValueError("Server was not found")
@@ -4067,6 +4106,8 @@ class Dashboard(QMainWindow):
                     return
                 if path == "/api/settings":
                     self._dispatch_mutation("update_settings", payload)
+                elif path == "/api/network/refresh":
+                    self._dispatch_mutation("refresh_network", payload)
                 elif path == "/api/servers":
                     self._dispatch_mutation("add_server", payload)
                 elif path.startswith("/api/host-key-prompts/"):
@@ -4181,6 +4222,7 @@ class Dashboard(QMainWindow):
             "disk_error": info.disk_error,
             "network": info.network,
             "network_checked_at": info.network_checked_at,
+            "network_next_check_at": (info.network_checked_at + RefreshSettings.network_interval_hours * 3600) if info.network_checked_at else 0,
             "network_error": info.network_error,
             "gpus": [
                 {

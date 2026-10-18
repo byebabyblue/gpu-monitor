@@ -205,11 +205,6 @@ internal fun GpuMonitorDashboardV2(
     var systemAppearanceLoaded by remember { mutableStateOf(false) }
     var pendingHistoryRangeSave by remember { mutableStateOf<Int?>(null) }
 
-    LaunchedEffect(configLoaded, configAvailable, config.ui.updateCheckIntervalHours) {
-        if (!configLoaded || !configAvailable) return@LaunchedEffect
-        updateController.setInterval(config.ui.updateCheckIntervalHours)
-    }
-
     LaunchedEffect(
         config.ui.trayLightweightEnabled,
         config.ui.trayLightweightDelayMinutes,
@@ -469,6 +464,8 @@ internal fun GpuMonitorDashboardV2(
                         updateBusy = updateBusy,
                         updateMessage = updateMessage,
                         updateLastAttempt = updateLastAttempt,
+                        apiPort = apiPort,
+                        onNetworkIntervalSaved = { hours -> config = config.copy(polling = config.polling.copy(networkIntervalHours = hours)) },
                         onCheckUpdate = { updateController.check(true) },
                         onWallpaperPreview = { path ->
                             config = config.copy(ui = config.ui.copy(wallpaperPath = path))
@@ -1727,6 +1724,8 @@ private fun V2SettingsPage(
     onSave: (PollSettings, UiSettings) -> Unit,
     onAddServer: (ServerDraft) -> Unit,
     modifier: Modifier,
+    apiPort: Int = config.polling.apiPort,
+    onNetworkIntervalSaved: (Int) -> Unit = {},
 ) {
     val wallpaperScope = rememberCoroutineScope()
     var wallpaper by remember { mutableStateOf(config.ui.wallpaperPath) }
@@ -1755,10 +1754,12 @@ private fun V2SettingsPage(
     }
     var draft by remember { mutableStateOf(ServerDraft()) }
     var diagnosticsMessage by remember { mutableStateOf("") }
-    var updateIntervalText by remember { mutableStateOf(config.ui.updateCheckIntervalHours.toString()) }
+    var networkHours by remember { mutableStateOf(config.polling.networkIntervalHours.toString()) }
+    var networkBusy by remember { mutableStateOf(false) }
+    var networkMessage by remember { mutableStateOf("") }
 
     LaunchedEffect(configGeneration) {
-        updateIntervalText = config.ui.updateCheckIntervalHours.toString()
+        networkHours = config.polling.networkIntervalHours.toString()
         wallpaper = config.ui.wallpaperPath
         apiPortText = config.polling.apiPort.toString()
         activeSeconds = config.polling.gpuActiveSeconds
@@ -1793,6 +1794,39 @@ private fun V2SettingsPage(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(top = 110.dp, bottom = 112.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        V2SettingsSection(backdrop, "连通性", "网络检测", Icons.Rounded.Refresh, Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("自动检测间隔", color = V2Text, fontSize = 12.sp)
+                V2Field(networkHours, { networkHours = it.filter(Char::isDigit).take(3) }, "12–168 小时", Modifier.width(140.dp))
+                V2ActionButton("保存间隔", Icons.Rounded.Save, networkBusy) {
+                    val hours = networkHours.toIntOrNull()
+                    if (hours != null && hours in 12..168) {
+                        networkBusy = true
+                        wallpaperScope.launch {
+                            withContext(Dispatchers.IO) { MonitorClient.saveNetworkInterval(apiPort, hours) }
+                                .onSuccess { onNetworkIntervalSaved(hours); networkMessage = "网络检测间隔已保存" }
+                                .onFailure { networkMessage = "保存失败：${it.message.orEmpty()}" }
+                            networkBusy = false
+                        }
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                V2ActionButton("立即检测", Icons.Rounded.Refresh, networkBusy) {
+                    networkBusy = true
+                    wallpaperScope.launch {
+                        withContext(Dispatchers.IO) { MonitorClient.refreshNetwork(apiPort) }
+                            .onSuccess { networkMessage = if (it > 0) "已开始检测，同一地址只检测一次" else "没有已连接的服务器" }
+                            .onFailure { networkMessage = "检测失败：${it.message.orEmpty()}" }
+                        networkBusy = false
+                    }
+                }
+            }
+            V2SegmentedSlider(backdrop, listOf("12 小时", "每天", "每 3 天", "每周"), listOf(12,24,72,168).indexOf(networkHours.toIntOrNull()),
+                { networkHours = listOf(12,24,72,168)[it].toString() }, Modifier.width(380.dp), height = 36.dp)
+            if (networkHours.toIntOrNull()?.let { it in 12..168 } != true) Text("请输入12至168之间的整数小时", color = V2Red, fontSize = 11.sp)
+            Text("同一服务器地址共用检测结果，正在进行的请求会自动合并。", color = V2Muted, fontSize = 10.sp)
+            if (networkMessage.isNotBlank()) Text(networkMessage, color = V2Dim, fontSize = 11.sp)
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             V2SettingsSection(backdrop, "APPEARANCE", "外观与默认页面", Icons.Rounded.Image, Modifier.weight(1f)) {
                 Text("壁纸", color = V2Dim, fontSize = 11.sp)
@@ -2211,19 +2245,6 @@ private fun V2SettingsPage(
                 }
                 V2ActionButton("立即检查", Icons.Rounded.Refresh, updateBusy, onCheckUpdate)
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("自动检查间隔", color = V2Text, fontSize = 12.sp)
-                V2Field(updateIntervalText, { updateIntervalText = it.take(3) }, "小时", Modifier.width(100.dp))
-                Text("12–168 小时，保存后生效", color = V2Muted, fontSize = 10.sp)
-            }
-            val updateHours = updateIntervalText.toIntOrNull()
-            if (updateHours == null || updateHours !in 12..168) {
-                Text("请输入 12 至 168 之间的整数", color = V2Red, fontSize = 10.sp)
-            }
-            V2SegmentedSlider(backdrop, listOf("12 小时", "每天", "每 3 天", "每周"),
-                listOf(12, 24, 72, 168).indexOf(updateHours),
-                { updateIntervalText = listOf(12, 24, 72, 168)[it].toString() },
-                Modifier.width(380.dp), height = 36.dp)
             if (updateLastAttempt > 0) {
                 Text("上次检查：${java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date(updateLastAttempt))}", color = V2Muted, fontSize = 10.sp)
             }
@@ -2281,11 +2302,11 @@ private fun V2SettingsPage(
                     Text(saveMessage.ifBlank { "设置保存在 %APPDATA%\\Xerver\\config.json" }, color = V2Dim, fontSize = 10.sp)
                 }
                 V2ActionButton("保存并应用", Icons.Rounded.Save, saveBusy) {
-                    val updateHours = updateIntervalText.toIntOrNull()
-                    if (updateHours == null || updateHours !in 12..168) return@V2ActionButton
+                    val networkInterval = networkHours.toIntOrNull()
+                    if (networkInterval == null || networkInterval !in 12..168) return@V2ActionButton
                     val port = apiPortText.toIntOrNull()?.coerceIn(1024, 65535) ?: DefaultApiPort
                     onSave(
-                        PollSettings(activeSeconds, idleSeconds, diskSeconds, processSeconds, idleThreshold, port),
+                        PollSettings(activeSeconds, idleSeconds, diskSeconds, processSeconds, idleThreshold, port, networkInterval),
                         UiSettings(
                             wallpaperPath = wallpaper,
                             defaultPage = defaultPage,
@@ -2301,7 +2322,6 @@ private fun V2SettingsPage(
                             rememberWindowBounds = rememberWindowBounds,
                             trayLightweightEnabled = trayLightweightEnabled,
                             trayLightweightDelayMinutes = trayLightweightDelayMinutes,
-                            updateCheckIntervalHours = updateHours,
                             gpuHistoryRangeMinutes = config.ui.gpuHistoryRangeMinutes,
                             windowBounds = config.ui.windowBounds,
                         ),
