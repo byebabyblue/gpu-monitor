@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "local.gpu.monitor"
-version = "1.2.3"
+version = "1.2.4"
 
 kotlin {
     jvmToolchain(21)
@@ -38,7 +38,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "Xerver"
-            packageVersion = "1.2.3"
+            packageVersion = "1.2.4"
             appResourcesRootDir.set(project.layout.projectDirectory.dir("appResources"))
             windows {
                 shortcut = true

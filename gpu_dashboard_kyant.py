@@ -70,19 +70,29 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem, QHeaderView,
     QPushButton, QComboBox, QInputDialog,
 )
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QObject, QCoreApplication
 from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QDrag
 import http.server
 import threading
 
 GPU_HISTORY_RANGE_OPTIONS = (15, 60, 360, 1440)
 
-# pyqtgraph is optional – dashboard still works without the history chart
-try:
-    import pyqtgraph as pg
-    HAS_PYQTGRAPH = True
-except ImportError:
-    HAS_PYQTGRAPH = False
+# Chart dependencies are loaded only by the standalone legacy UI.
+pg = None
+HAS_PYQTGRAPH = False
+
+
+def _load_legacy_charts():
+    global pg, HAS_PYQTGRAPH
+    if pg is not None:
+        return
+    try:
+        import pyqtgraph as charts
+        pg = charts
+        HAS_PYQTGRAPH = True
+    except ImportError:
+        pass
+
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Theme
@@ -1485,7 +1495,6 @@ class CircleGauge(QWidget):
                    f"{self.val:.0f}%")
 
 
-
         # title below
         p.setPen(QColor(C.DIM))
         p.setFont(QFont("Segoe UI", 11))
@@ -1909,13 +1918,10 @@ _TIME_RANGES = [
 #  Main window
 # ═══════════════════════════════════════════════════════════════════════
 
-class Dashboard(QMainWindow):
-
-    api_mutation_requested = pyqtSignal(object)
-
-    def __init__(self, config_path: str, demo: bool = False,
+class MonitorState:
+    """Data collection, configuration and API shared by both entry points."""
+    def _initialize_state(self, config_path: str, demo: bool = False,
                  api_port: int = 8766):
-        super().__init__()
         self.api_mutation_requested.connect(self._handle_api_mutation)
         self._demo = demo
         self._api_port = int(api_port)
@@ -1923,24 +1929,6 @@ class Dashboard(QMainWindow):
         self._state_lock = RLock()
         self._api_server = None
         self._api_thread = None
-        self.setWindowTitle(
-            "Xerver — DEMO MODE" if demo else "Xerver"
-        )
-
-        screen = QApplication.primaryScreen()
-        available = screen.availableGeometry() if screen else None
-        screen_w = available.width() if available else 1600
-        screen_h = available.height() if available else 1000
-        self._compact_ui = screen_w < 1500 or screen_h < 850
-        self.setMinimumSize(
-            min(1100, max(900, int(screen_w * 0.60))),
-            min(760, max(600, int(screen_h * 0.68))),
-        )
-        self.resize(
-            min(1600, max(1000, int(screen_w * 0.92))),
-            min(1000, max(680, int(screen_h * 0.90))),
-        )
-
         self._servers: dict[str, ServerInfo]    = {}
         self._cards:   dict[str, ServerCard]    = {}
         self._threads: dict[str, QThread] = {}
@@ -2056,8 +2044,6 @@ class Dashboard(QMainWindow):
                 ("data_preprocess",  "数据预处理"),
             ])
 
-        self._build_ui()
-        self._add_servers()
 
     @staticmethod
     def _detect_yolo_version(cmd: str) -> str:
@@ -2072,6 +2058,7 @@ class Dashboard(QMainWindow):
             if match:
                 return match.group(1)
         return ""
+
 
     def _match_note(self, cmd: str) -> str:
         """Match a command to a note, deriving the real YOLO version first."""
@@ -2094,6 +2081,7 @@ class Dashboard(QMainWindow):
                 return note
         return ""
 
+
     @staticmethod
     def _normalize_command_signature(command: str) -> str:
         """Collapse volatile arguments so repeated jobs produce one queue row."""
@@ -2101,6 +2089,7 @@ class Dashboard(QMainWindow):
         text = re.sub(r"\s+", " ", text).strip().lower()
         text = re.sub(r"(?i)(--seed(?:=|\s+))\d+", r"\1<N>", text)
         return text
+
 
     @staticmethod
     def _redact_command(command: str) -> str:
@@ -2110,6 +2099,7 @@ class Dashboard(QMainWindow):
             r"\1<REDACTED>",
             str(command or ""),
         )
+
 
     def _record_unmatched_commands(self, server_name: str, tasks: list[dict]):
         """Append each unseen, unmatched command to the local analysis queue."""
@@ -2144,6 +2134,951 @@ class Dashboard(QMainWindow):
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError:
             pass
+
+
+    def _add_servers(self):
+        seen_names = set()
+        for idx, cfg in enumerate(self._cfg.get("servers", [])):
+            if not isinstance(cfg, dict):
+                continue
+            name = str(cfg.get("name") or cfg.get("host") or "").strip()
+            if not name or name in seen_names:
+                continue
+            if not self._demo and (not cfg.get("host") or not cfg.get("user")):
+                continue
+            cfg["name"] = name
+            seen_names.add(name)
+            info = ServerInfo(name)
+            self._servers[name] = info
+
+            if hasattr(self, "_slist"):
+                card = ServerCard(name)
+                card.clicked.connect(self._on_card_click)
+                card.remove_requested.connect(self._remove_server)
+                self._cards[name] = card
+                self._slist.addWidget(card)
+
+            if self._demo:
+                t = MockMonitorThread(cfg, profile_idx=idx,
+                                      interval=self._interval, parent=self)
+            else:
+                t = MonitorThread(
+                    cfg,
+                    interval=self._interval,
+                    known_hosts_path=self._known_hosts_path,
+                    parent=self,
+                )
+            t.data_ready.connect(self._on_data)
+            t.status_changed.connect(self._on_status)
+            t.conn_lost.connect(self._on_connection_lost)
+            t.host_key_required.connect(self._on_host_key_required)
+            self._threads[name] = t
+
+        # auto-select first
+        if self._cards:
+            first = next(iter(self._cards))
+            self._on_card_click(first)
+
+        # HTTP API (port 8765)
+        self._start_api()
+
+        # start threads after UI is ready
+        QTimer.singleShot(100, self._start_threads)
+
+
+    def _start_threads(self):
+        for t in self._threads.values():
+            if not t.isRunning():
+                t.start()
+
+
+    def _on_connection_lost(self, name):
+        card = self._cards.get(name)
+        info = self._servers.get(name)
+        if card is not None and info is not None:
+            card.update_info(info)
+
+
+    def _on_data(self, name, info: ServerInfo):
+        if self._closing or name not in self._threads:
+            return
+        with self._state_lock:
+            self._servers[name] = info
+        self._record_unmatched_commands(
+            name, info.running_tasks + info.queued_tasks
+        )
+        if name in self._cards:
+            self._cards[name].update_info(info)
+        if name == self._current:
+            self._refresh_detail(name, info)
+        # update overview card data without rebuilding
+        if self._current is None and hasattr(self, "_overview_widget"):
+            self._update_overview_card(name, info)
+
+
+    def _on_status(self, name, status):
+        with self._state_lock:
+            if name in self._servers:
+                self._servers[name].status = status
+
+
+    def _on_host_key_required(self, name, prompt):
+        with self._state_lock:
+            self._host_key_prompts[name] = dict(prompt)
+            info = self._servers.get(name)
+            if info is not None:
+                info.status = "host_key_required"
+                info.connected = False
+                info.error = "等待确认服务器主机指纹"
+        card = self._cards.get(name)
+        info = self._servers.get(name)
+        if card is not None and info is not None:
+            card.update_info(info)
+
+
+    def _save_config(self):
+        if self._demo or not hasattr(self, "_cfg_path"):
+            return False
+        config_path = Path(self._cfg_path)
+        backup_path = config_path.with_name("config.backup.json")
+        temporary_path = config_path.with_name(f".{config_path.name}.tmp")
+        try:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            if config_path.is_file():
+                shutil.copy2(config_path, backup_path)
+            with open(temporary_path, "w", encoding="utf-8") as f:
+                json.dump(self._cfg, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary_path, config_path)
+            return True
+        except OSError:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return False
+
+
+    def _remove_server(self, name):
+        """Remove a server from config, UI, and monitoring."""
+        if name not in self._servers:
+            return
+
+        thread = self._threads.pop(name, None)
+        if thread is not None:
+            try:
+                thread.data_ready.disconnect(self._on_data)
+                thread.status_changed.disconnect(self._on_status)
+                thread.conn_lost.disconnect(self._on_connection_lost)
+            except (TypeError, RuntimeError):
+                pass
+            thread.stop()
+            thread.wait(3000)
+
+        # remove from config
+        self._cfg["servers"] = [s for s in self._cfg.get("servers", []) if s.get("name") != name]
+        ui = self._cfg.get("ui", {})
+        if isinstance(ui, dict) and isinstance(ui.get("hidden_servers"), list):
+            ui["hidden_servers"] = [item for item in ui["hidden_servers"] if str(item) != name]
+        self._save_config()
+
+        # remove from sidebar
+        if name in self._cards:
+            self._slist.removeWidget(self._cards[name])
+            self._cards[name].deleteLater()
+            del self._cards[name]
+
+        # remove from data
+        with self._state_lock:
+            self._servers.pop(name, None)
+
+        if hasattr(self, "_detail_views") and name in self._detail_views:
+            view = self._detail_views.pop(name)
+            self._dl.removeWidget(view["widget"])
+            view["widget"].deleteLater()
+
+        # if this was the current detail view, go back to placeholder
+        if self._current == name:
+            self._current = None
+            self._placeholder.show()
+        self._overview_signature = None
+        if self._current is None and hasattr(self, "_overview_widget"):
+            self._refresh_overview()
+
+
+    def _start_api(self):
+        if self._api_thread and self._api_thread.is_alive():
+            return
+        self._api_thread = threading.Thread(target=self._run_api, daemon=True)
+        self._api_thread.start()
+
+
+    def _api_config_dict(self):
+        settings = self._cfg.get("settings", {})
+        if not isinstance(settings, dict):
+            settings = {}
+        ui = self._cfg.get("ui", {})
+        if not isinstance(ui, dict):
+            ui = {}
+        try:
+            font_scale = float(ui.get("font_scale", 1.35))
+        except (TypeError, ValueError):
+            font_scale = 1.35
+        font_scale = max(0.90, min(1.85, font_scale))
+        glass_tint = str(ui.get("glass_tint", "clear") or "clear").lower()
+        if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:
+            glass_tint = "clear"
+        legacy_card_blur = bool(
+            ui.get("readability_blur", False) or ui.get("readability_shade", False)
+        )
+        card_blur_level = self._coerce_blur_level(
+            ui.get("card_blur_level"), 2 if legacy_card_blur else 0
+        )
+        top_bar_blur_level = self._coerce_blur_level(
+            ui.get("top_bar_blur_level"), 2 if bool(ui.get("top_bar_blur", True)) else 0
+        )
+        bottom_bar_blur_level = self._coerce_blur_level(
+            ui.get("bottom_bar_blur_level"), 2 if bool(ui.get("bottom_bar_blur", True)) else 0
+        )
+        try:
+            tray_lightweight_delay_minutes = int(
+                ui.get("tray_lightweight_delay_minutes", 5)
+            )
+        except (TypeError, ValueError):
+            tray_lightweight_delay_minutes = 5
+        tray_lightweight_delay_minutes = max(1, min(1440, tray_lightweight_delay_minutes))
+        try:
+            gpu_history_range_minutes = int(
+                ui.get("gpu_history_range_minutes", 1440)
+            )
+        except (TypeError, ValueError):
+            gpu_history_range_minutes = 1440
+        gpu_history_range_minutes = min(
+            GPU_HISTORY_RANGE_OPTIONS,
+            key=lambda option: abs(option - gpu_history_range_minutes),
+        )
+        hidden_servers_value = ui.get("hidden_servers", [])
+        if not isinstance(hidden_servers_value, list):
+            hidden_servers_value = []
+        hidden_servers = list(dict.fromkeys(
+            str(name).strip() for name in hidden_servers_value if str(name).strip()
+        ))
+        window_bounds = None
+        window_bounds_value = ui.get("window_bounds")
+        if isinstance(window_bounds_value, dict):
+            try:
+                parsed_bounds = {
+                    "x": int(window_bounds_value.get("x", 0)),
+                    "y": int(window_bounds_value.get("y", 0)),
+                    "width": int(window_bounds_value.get("width", 0)),
+                    "height": int(window_bounds_value.get("height", 0)),
+                }
+                if parsed_bounds["width"] >= 320 and parsed_bounds["height"] >= 240:
+                    window_bounds = parsed_bounds
+            except (TypeError, ValueError):
+                window_bounds = None
+        servers = []
+        for server in self._cfg.get("servers", []):
+            if not isinstance(server, dict):
+                continue
+            servers.append({
+                "name": str(server.get("name", "")),
+                "host": str(server.get("host", "")),
+                "port": int(server.get("port", 22) or 22),
+                "user": str(server.get("user", "root")),
+                "key": str(server.get("key", "") or ""),
+                "disk_path": str(server.get("disk_path", ".") or "."),
+                "has_password": bool(server.get("password")),
+            })
+        return {
+            "settings": {
+                "gpu_active_interval": RefreshSettings.gpu_active_interval,
+                "gpu_idle_interval": RefreshSettings.gpu_idle_interval,
+                "disk_interval": RefreshSettings.disk_interval,
+                "process_interval": RefreshSettings.process_interval,
+                "network_interval_hours": RefreshSettings.network_interval_hours,
+                "idle_threshold": RefreshSettings.idle_threshold,
+                "api_port": int(settings.get("api_port", self._api_port)),
+            },
+            "ui": {
+                "wallpaper_path": str(ui.get("wallpaper_path", "") or ""),
+                "default_page": str(ui.get("default_page", "home") or "home"),
+                "autostart": bool(ui.get("autostart", False)),
+                "start_minimized_to_tray": bool(ui.get("start_minimized_to_tray", False)),
+                "card_blur_level": card_blur_level,
+                "text_mode": str(ui.get("text_mode", "system") or "system"),
+                "top_bar_blur_level": top_bar_blur_level,
+                "bottom_bar_blur_level": bottom_bar_blur_level,
+                "glass_tint": glass_tint,
+                "font_scale": font_scale,
+                "hidden_servers": hidden_servers,
+                "remember_window_bounds": bool(ui.get("remember_window_bounds", False)),
+                "tray_lightweight_enabled": bool(ui.get("tray_lightweight_enabled", False)),
+                "tray_lightweight_delay_minutes": tray_lightweight_delay_minutes,
+                "gpu_history_range_minutes": gpu_history_range_minutes,
+                "window_bounds": window_bounds,
+            },
+            "servers": servers,
+        }
+
+
+    @staticmethod
+    def _coerce_blur_level(value, fallback):
+        try:
+            return max(0, min(3, int(value)))
+        except (TypeError, ValueError):
+            return fallback
+
+
+    @staticmethod
+    def _history_to_dict(info, range_minutes=1440):
+        series = []
+        for index, history in enumerate(info.gpu_history):
+            points = history_points(history, range_minutes)
+            gpu_name = ""
+            if index < len(info.gpus):
+                gpu_name = str(info.gpus[index].get("name", ""))
+            series.append({
+                "index": info.gpus[index]["idx"] if index < len(info.gpus) else index,
+                "name": gpu_name,
+                "points": points,
+                "daily_points": history_points(history, 1440),
+            })
+        return {"server": info.name, "series": series}
+
+
+    def _handle_api_mutation(self, request):
+        result = request["result"]
+        done = request["done"]
+        try:
+            action = request.get("action")
+            payload = request.get("payload") or {}
+            if action == "update_settings":
+                result.update(self._api_update_settings(payload))
+            elif action == "refresh_network":
+                result.update(self._api_refresh_network(payload))
+            elif action == "add_server":
+                result.update(self._api_add_server(payload))
+            elif action == "remove_server":
+                result.update(self._api_remove_server(str(payload.get("name", ""))))
+            elif action == "resolve_host_key":
+                result.update(self._api_resolve_host_key(
+                    str(payload.get("name", "")), payload
+                ))
+            else:
+                raise ValueError("Unsupported API action")
+        except Exception as exc:
+            result.update({"ok": False, "error": str(exc)})
+        finally:
+            done.set()
+
+
+    def _api_update_settings(self, payload):
+        settings_payload = payload.get("settings", payload)
+        if not isinstance(settings_payload, dict):
+            raise ValueError("settings must be an object")
+
+        if "network_interval_hours" in settings_payload:
+            value = settings_payload["network_interval_hours"]
+            if isinstance(value, bool) or not isinstance(value, int) or not 12 <= value <= 168:
+                raise ValueError("网络检测间隔须为12至168之间的整数小时")
+
+        numeric_fields = {
+            "gpu_active_interval": (3, 1, 300),
+            "gpu_idle_interval": (60, 5, 3600),
+            "disk_interval": (21600, 5, 86400),
+            "process_interval": (6, 2, 300),
+            "network_interval_hours": (24, 12, 168),
+            "idle_threshold": (600, 30, 86400),
+        }
+        settings = self._cfg.get("settings", {})
+        if not isinstance(settings, dict):
+            settings = {}
+        for field, bounds in numeric_fields.items():
+            if field not in settings_payload:
+                continue
+            default, minimum, maximum = bounds
+            value = RefreshSettings._bounded_number(
+                settings_payload[field], default, minimum, maximum
+            )
+            settings[field] = value
+            setattr(RefreshSettings, field, value)
+
+        restart_required = False
+        if "api_port" in settings_payload:
+            try:
+                api_port = int(settings_payload["api_port"])
+            except (TypeError, ValueError):
+                raise ValueError("API port must be a number")
+            if not 1024 <= api_port <= 65535:
+                raise ValueError("API port must be between 1024 and 65535")
+            settings["api_port"] = api_port
+            restart_required = api_port != self._api_port
+        self._cfg["settings"] = settings
+
+        ui_payload = payload.get("ui", {})
+        if not isinstance(ui_payload, dict):
+            raise ValueError("ui must be an object")
+        ui = self._cfg.get("ui", {})
+        if not isinstance(ui, dict):
+            ui = {}
+        ui = dict(ui)
+        autostart_change = None
+        if "wallpaper_path" in ui_payload:
+            ui["wallpaper_path"] = str(ui_payload.get("wallpaper_path", "") or "")
+        if "default_page" in ui_payload:
+            page = str(ui_payload.get("default_page", "home")).lower()
+            if page not in {"home", "overview", "gpu", "node", "settings"}:
+                raise ValueError("Unknown default page")
+            ui["default_page"] = page
+        if "autostart" in ui_payload:
+            enabled = bool(ui_payload["autostart"])
+            if enabled != bool(ui.get("autostart", False)):
+                autostart_change = enabled
+            ui["autostart"] = enabled
+        if "start_minimized_to_tray" in ui_payload:
+            ui["start_minimized_to_tray"] = bool(ui_payload["start_minimized_to_tray"])
+        if "readability_blur" in ui_payload or "readability_shade" in ui_payload:
+            legacy_enabled = bool(ui_payload.get("readability_blur", False)) or bool(
+                ui_payload.get("readability_shade", False)
+            )
+            ui["card_blur_level"] = 2 if legacy_enabled else 0
+        if "text_mode" in ui_payload:
+            text_mode = str(ui_payload.get("text_mode", "system")).lower()
+            if text_mode not in {"system", "light", "dark"}:
+                raise ValueError("Unknown text color mode")
+            ui["text_mode"] = text_mode
+        if "top_bar_blur" in ui_payload:
+            ui["top_bar_blur_level"] = 2 if bool(ui_payload["top_bar_blur"]) else 0
+        if "bottom_bar_blur" in ui_payload:
+            ui["bottom_bar_blur_level"] = 2 if bool(ui_payload["bottom_bar_blur"]) else 0
+        for blur_field in ("card_blur_level", "top_bar_blur_level", "bottom_bar_blur_level"):
+            if blur_field not in ui_payload:
+                continue
+            try:
+                blur_level = int(ui_payload[blur_field])
+            except (TypeError, ValueError):
+                raise ValueError("Blur level must be a number")
+            if not 0 <= blur_level <= 3:
+                raise ValueError("Blur level must be between 0 and 3")
+            ui[blur_field] = blur_level
+        if any(field in ui_payload for field in ("readability_blur", "readability_shade", "card_blur_level")):
+            ui.pop("readability_blur", None)
+            ui.pop("readability_shade", None)
+        if "top_bar_blur" in ui_payload or "top_bar_blur_level" in ui_payload:
+            ui.pop("top_bar_blur", None)
+        if "bottom_bar_blur" in ui_payload or "bottom_bar_blur_level" in ui_payload:
+            ui.pop("bottom_bar_blur", None)
+        if "glass_tint" in ui_payload:
+            glass_tint = str(ui_payload.get("glass_tint", "clear")).lower()
+            if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:
+                raise ValueError("Unknown glass tint")
+            ui["glass_tint"] = glass_tint
+        if "hidden_servers" in ui_payload:
+            hidden_servers = ui_payload["hidden_servers"]
+            if not isinstance(hidden_servers, list):
+                raise ValueError("Hidden servers must be an array")
+            ui["hidden_servers"] = list(dict.fromkeys(
+                str(name).strip() for name in hidden_servers if str(name).strip()
+            ))
+        if "remember_window_bounds" in ui_payload:
+            ui["remember_window_bounds"] = bool(ui_payload["remember_window_bounds"])
+        if "tray_lightweight_enabled" in ui_payload:
+            ui["tray_lightweight_enabled"] = bool(ui_payload["tray_lightweight_enabled"])
+        if "tray_lightweight_delay_minutes" in ui_payload:
+            try:
+                tray_lightweight_delay_minutes = int(ui_payload["tray_lightweight_delay_minutes"])
+            except (TypeError, ValueError):
+                raise ValueError("Tray lightweight delay must be a number")
+            if not 1 <= tray_lightweight_delay_minutes <= 1440:
+                raise ValueError("Tray lightweight delay must be between 1 and 1440 minutes")
+            ui["tray_lightweight_delay_minutes"] = tray_lightweight_delay_minutes
+        ui.pop("update_check_interval_hours", None)
+        if "gpu_history_range_minutes" in ui_payload:
+            try:
+                gpu_history_range_minutes = int(ui_payload["gpu_history_range_minutes"])
+            except (TypeError, ValueError):
+                raise ValueError("GPU history range must be a number")
+            if gpu_history_range_minutes not in GPU_HISTORY_RANGE_OPTIONS:
+                raise ValueError("GPU history range must be 15, 60, 360, or 1440 minutes")
+            ui["gpu_history_range_minutes"] = gpu_history_range_minutes
+        if "window_bounds" in ui_payload:
+            window_bounds = ui_payload["window_bounds"]
+            if window_bounds is None:
+                ui.pop("window_bounds", None)
+            elif not isinstance(window_bounds, dict):
+                raise ValueError("Window bounds must be an object")
+            else:
+                try:
+                    parsed_bounds = {
+                        "x": int(window_bounds.get("x", 0)),
+                        "y": int(window_bounds.get("y", 0)),
+                        "width": int(window_bounds.get("width", 0)),
+                        "height": int(window_bounds.get("height", 0)),
+                    }
+                except (TypeError, ValueError):
+                    raise ValueError("Window bounds must contain integer values")
+                if not 320 <= parsed_bounds["width"] <= 16384:
+                    raise ValueError("Window width is out of range")
+                if not 240 <= parsed_bounds["height"] <= 16384:
+                    raise ValueError("Window height is out of range")
+                if not -65536 <= parsed_bounds["x"] <= 65536 or not -65536 <= parsed_bounds["y"] <= 65536:
+                    raise ValueError("Window position is out of range")
+                ui["window_bounds"] = parsed_bounds
+        if "font_scale" in ui_payload:
+            try:
+                font_scale = float(ui_payload["font_scale"])
+            except (TypeError, ValueError):
+                raise ValueError("Font scale must be a number")
+            if not 0.90 <= font_scale <= 1.85:
+                raise ValueError("Font scale must be between 0.90 and 1.85")
+            ui["font_scale"] = round(font_scale, 2)
+        # Validate the entire UI payload first. Saving an unrelated setting or
+        # rejecting an invalid request must not modify Windows startup entries.
+        if autostart_change is not None:
+            self._set_autostart(autostart_change)
+        self._cfg["ui"] = ui
+        if not self._save_config():
+            raise OSError("Unable to save configuration")
+        return {
+            "ok": True,
+            "restart_required": restart_required,
+            "config": self._api_config_dict(),
+        }
+
+
+    def _set_autostart(self, enabled):
+        changed = update_autostart(
+            enabled,
+            self._cfg_path,
+            str(os.environ.get("GPU_MONITOR_FRONTEND_EXE", "") or "").strip(),
+        )
+        backend_logger.info("User changed autostart enabled=%s registry_changed=%s", enabled, changed)
+
+
+    def _api_add_server(self, payload):
+        name = str(payload.get("name", "")).strip()
+        host = str(payload.get("host", "")).strip()
+        user = str(payload.get("user", "root")).strip() or "root"
+        try:
+            port = int(payload.get("port", 22))
+        except (TypeError, ValueError):
+            raise ValueError("SSH port must be a number")
+        if not name:
+            raise ValueError("Server name is required")
+        if not host:
+            raise ValueError("Server address is required")
+        if not 1 <= port <= 65535:
+            raise ValueError("SSH port must be between 1 and 65535")
+        if name in self._servers:
+            raise ValueError("A server with this name already exists")
+
+        configured = [
+            server for server in self._cfg.get("servers", [])
+            if isinstance(server, dict)
+        ]
+        endpoint = (host.lower(), port, user.lower())
+        for server in configured:
+            current = (
+                str(server.get("host", "")).strip().lower(),
+                int(server.get("port", 22) or 22),
+                str(server.get("user", "root")).strip().lower(),
+            )
+            if current == endpoint:
+                raise ValueError("This SSH endpoint already exists")
+
+        server_cfg = {
+            "name": name,
+            "host": host,
+            "port": port,
+            "user": user,
+            "disk_path": str(payload.get("disk_path", ".") or ".").strip() or ".",
+        }
+        password = str(payload.get("password", "") or "")
+        key_file = str(payload.get("key", "") or "").strip()
+        if password:
+            server_cfg["password"] = password
+        if key_file:
+            server_cfg["key"] = key_file
+
+        configured.append(server_cfg)
+        self._cfg["servers"] = configured
+        self._save_config()
+
+        info = ServerInfo(name)
+        with self._state_lock:
+            self._servers[name] = info
+        if hasattr(self, "_slist"):
+            card = ServerCard(name)
+            card.clicked.connect(self._on_card_click)
+            card.remove_requested.connect(self._remove_server)
+            self._cards[name] = card
+            self._slist.addWidget(card)
+
+        if self._demo:
+            thread = MockMonitorThread(
+                server_cfg, profile_idx=len(self._threads) % 4,
+                interval=self._interval, parent=self
+            )
+        else:
+            thread = MonitorThread(
+                server_cfg,
+                interval=self._interval,
+                known_hosts_path=self._known_hosts_path,
+                parent=self,
+            )
+        thread.data_ready.connect(self._on_data)
+        thread.status_changed.connect(self._on_status)
+        thread.conn_lost.connect(self._on_connection_lost)
+        thread.host_key_required.connect(self._on_host_key_required)
+        self._threads[name] = thread
+        thread.start()
+        self._overview_signature = None
+        return {
+            "ok": True,
+            "server": {
+                "name": name, "host": host, "port": port, "user": user,
+                "disk_path": server_cfg["disk_path"],
+            },
+        }
+
+
+    def _api_refresh_network(self, payload):
+        name = str(payload.get("name", ""))
+        if name and name not in self._threads:
+            raise ValueError("未找到服务器")
+        targets = [self._threads[name]] if name else list(self._threads.values())
+        scheduled = 0
+        requested_at = time.time()
+        for thread in targets:
+            collector = getattr(thread, "collector", None)
+            info = getattr(thread, "info", None)
+            if collector is not None and info is not None and info.connected:
+                collector.request_network_refresh(requested_at)
+                scheduled += 1
+        return {"ok": True, "scheduled": scheduled}
+
+
+    def _api_remove_server(self, name):
+        if not name or name not in self._servers:
+            raise ValueError("Server was not found")
+        self._remove_server(name)
+        return {"ok": True}
+
+
+    def _api_host_key_prompts(self):
+        with self._state_lock:
+            prompts = [dict(prompt) for prompt in self._host_key_prompts.values()]
+        return {"ok": True, "prompts": prompts}
+
+
+    def _api_resolve_host_key(self, name, payload):
+        if not name or name not in self._threads:
+            raise ValueError("Server was not found")
+        decision = str(payload.get("decision", "")).strip().lower()
+        if decision not in {"once", "remember", "reject"}:
+            raise ValueError("Unknown host key decision")
+        thread = self._threads[name]
+        if not isinstance(thread, MonitorThread) or not thread.resolve_host_key(decision):
+            raise ValueError("No pending host key confirmation for this server")
+        with self._state_lock:
+            self._host_key_prompts.pop(name, None)
+        return {"ok": True, "server_name": name, "decision": decision}
+
+
+    def _run_api(self):
+        sv = self
+
+        class APIHandler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                pass
+
+            def parse_request(self):
+                if not super().parse_request():
+                    return False
+                # Native clients only: reject browser origins and DNS rebinding.
+                allowed_hosts = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
+                if (self.headers.get("Host", "").lower() not in allowed_hosts
+                        or self.headers.get("Origin") is not None
+                        or self.headers.get("Sec-Fetch-Site") in {"cross-site", "same-site"}):
+                    self._send_error(403, "Only native loopback clients are allowed")
+                    return False
+                return True
+
+            def do_GET(self):
+                path = urlsplit(self.path).path
+                if path == "/api/servers":
+                    with sv._state_lock:
+                        items = list(sv._servers.items())
+                    data = {
+                        name: sv._server_to_dict(info) for name, info in items
+                    }
+                    self._send_json(data)
+                elif path == "/api/config":
+                    self._send_json(sv._api_config_dict())
+                elif path == "/api/host-key-prompts":
+                    self._send_json(sv._api_host_key_prompts())
+                elif path.startswith("/api/servers/") and path.endswith("/history"):
+                    try:
+                        range_minutes = int(parse_qs(urlsplit(self.path).query).get("range_minutes", ["1440"])[0])
+                        if range_minutes not in RANGE_BUCKET_SECONDS:
+                            raise ValueError()
+                    except (ValueError, TypeError):
+                        self._send_error(400, "Invalid history range")
+                        return
+                    encoded_name = path[len("/api/servers/"):-len("/history")]
+                    name = unquote(encoded_name.rstrip("/"))
+                    with sv._state_lock:
+                        info = sv._servers.get(name)
+                    if info is not None:
+                        self._send_json(sv._history_to_dict(info, range_minutes))
+                    else:
+                        self._send_error(404, "Server not found")
+                elif path.startswith("/api/servers/"):
+                    name = unquote(path[len("/api/servers/"):])
+                    with sv._state_lock:
+                        info = sv._servers.get(name)
+                    if info is not None:
+                        self._send_json(sv._server_to_dict(info))
+                    else:
+                        self._send_error(404, "Server not found")
+                elif path == "/api/events":
+                    events = []
+                    with sv._state_lock:
+                        items = list(sv._servers.items())
+                    for name, info in items:
+                        for ev in info.gpu_events:
+                            ev_copy = dict(ev)
+                            ev_copy["server"] = name
+                            events.append(ev_copy)
+                    self._send_json(events)
+                else:
+                    self._send_error(404, "Not found")
+
+            def do_POST(self):
+                path = urlsplit(self.path).path
+                try:
+                    payload = self._read_json()
+                except ValueError as exc:
+                    self._send_error(400, str(exc))
+                    return
+                if path == "/api/settings":
+                    self._dispatch_mutation("update_settings", payload)
+                elif path == "/api/network/refresh":
+                    self._dispatch_mutation("refresh_network", payload)
+                elif path == "/api/servers":
+                    self._dispatch_mutation("add_server", payload)
+                elif path.startswith("/api/host-key-prompts/"):
+                    name = unquote(path[len("/api/host-key-prompts/"):])
+                    mutation = dict(payload)
+                    mutation["name"] = name
+                    self._dispatch_mutation("resolve_host_key", mutation)
+                else:
+                    self._send_error(404, "Not found")
+
+            def do_DELETE(self):
+                path = urlsplit(self.path).path
+                if path.startswith("/api/servers/"):
+                    name = unquote(path[len("/api/servers/"):])
+                    self._dispatch_mutation("remove_server", {"name": name})
+                else:
+                    self._send_error(404, "Not found")
+
+            def do_OPTIONS(self):
+                self._send_error(405, "Browser access is not supported")
+
+            def _read_json(self):
+                if self.headers.get_content_type() != "application/json":
+                    raise ValueError("Content-Type must be application/json")
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    raise ValueError("Invalid Content-Length")
+                if length <= 0 or length > 1024 * 1024:
+                    raise ValueError("Request body must contain JSON")
+                try:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    raise ValueError("Invalid JSON")
+                if not isinstance(payload, dict):
+                    raise ValueError("JSON body must be an object")
+                return payload
+
+            def _dispatch_mutation(self, action, payload):
+                done = threading.Event()
+                result = {}
+                sv.api_mutation_requested.emit({
+                    "action": action,
+                    "payload": payload,
+                    "done": done,
+                    "result": result,
+                })
+                if not done.wait(10):
+                    self._send_error(504, "Backend operation timed out")
+                    return
+                self._send_json(result, 200 if result.get("ok") else 400)
+
+            def _send_json(self, data, status=200):
+                body = json.dumps(data, default=str, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _send_error(self, code, msg):
+                self._send_json({"ok": False, "error": msg}, code)
+
+        try:
+            server = http.server.ThreadingHTTPServer(
+                ("127.0.0.1", self._api_port), APIHandler
+            )
+            server.daemon_threads = True
+            self._api_server = server
+            backend_logger.info("Local API listening on 127.0.0.1:%s", self._api_port)
+            server.serve_forever(poll_interval=0.25)
+        except OSError:
+            self._api_server = None
+            backend_logger.exception("Local API failed to listen on 127.0.0.1:%s", self._api_port)
+
+
+    def _server_to_dict(self, info):
+        def task_to_dict(task):
+            command = str(task.get("cmd", "") or "")
+            return {
+                "pid": str(task.get("pid", "")),
+                "user": str(task.get("user", "")),
+                "cpu_percent": task.get("cpu", 0),
+                "mem_percent": task.get("mem", 0),
+                "gpu": str(task.get("gpu", "—") or "—"),
+                "state": str(task.get("state", "") or ""),
+                "command": command,
+                "time": str(task.get("etime", "") or ""),
+                "note": str(self._match_note(command) or ""),
+            }
+
+        return {
+            "name": info.name,
+            "status": info.status,
+            "connected": info.connected,
+            "error": info.error,
+            "cpu": {
+                "percent": info.cpu_pct,
+                "cores": info.cpu_cores,
+                "model": info.cpu_model,
+            },
+            "memory": {
+                "used_gb": round(info.mem_used / 1024, 1),
+                "total_gb": round(info.mem_total / 1024, 1),
+                "percent": info.mem_pct,
+            },
+            "disk": {
+                "used_gb": info.disk_used,
+                "total_gb": info.disk_total,
+                "percent": info.disk_pct,
+                "volumes": info.disks,
+            },
+            "disk_error": info.disk_error,
+            "network": info.network,
+            "network_checked_at": info.network_checked_at,
+            "network_next_check_at": (info.network_checked_at + RefreshSettings.network_interval_hours * 3600) if info.network_checked_at else 0,
+            "network_error": info.network_error,
+            "gpus": [
+                {
+                    "index": g["idx"],
+                    "name": g["name"],
+                    "util_percent": g["util"],
+                    "memory_used_mib": g["mem_used"],
+                    "memory_total_mib": g["mem_total"],
+                    "memory_percent": g["mem_pct"],
+                    "temp_celsius": g["temp"],
+                    "power_watts": g["power"],
+                    "power_limit_watts": g["power_lim"],
+                }
+                for g in info.gpus
+            ],
+            "running_tasks": [task_to_dict(task) for task in info.running_tasks],
+            "queued_tasks": [task_to_dict(task) for task in info.queued_tasks],
+            "last_update": info.last_update.isoformat(sep=" ", timespec="seconds") if info.last_update else None,
+        }
+
+
+    @staticmethod
+    def _shutdown_http_server(server):
+        try:
+            server.shutdown()
+        finally:
+            server.server_close()
+
+
+    def _stop_backend(self):
+        if self._closing:
+            return
+        self._closing = True
+        if hasattr(self, "_ctimer"):
+            self._ctimer.stop()
+        server = self._api_server
+        if server:
+            self._api_server = None
+            threading.Thread(
+                target=self._shutdown_http_server,
+                args=(server,),
+                daemon=True,
+            ).start()
+        threads = list(self._threads.values())
+        for t in threads:
+            t.stop()
+
+        # Keep one shared shutdown deadline.  Waiting five seconds per server
+        # made copied configs with many stale entries freeze the GUI on exit.
+        deadline = time.monotonic() + 1.5
+        for t in threads:
+            remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+            if remaining_ms <= 0:
+                break
+            t.wait(remaining_ms)
+
+
+class MonitorBackend(QObject, MonitorState):
+    """Qt event-loop service without windows, cards, charts or UI timers."""
+    api_mutation_requested = pyqtSignal(object)
+
+    def __init__(self, config_path: str, demo: bool = False, api_port: int = 8766):
+        super().__init__()
+        self._initialize_state(config_path, demo, api_port)
+        self._add_servers()
+
+
+class Dashboard(QMainWindow, MonitorState):
+
+    api_mutation_requested = pyqtSignal(object)
+
+    def __init__(self, config_path: str, demo: bool = False, api_port: int = 8766):
+        super().__init__()
+        _load_legacy_charts()
+        self._initialize_state(config_path, demo, api_port)
+        self.setWindowTitle(
+            "Xerver — DEMO MODE" if demo else "Xerver"
+        )
+
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen else None
+        screen_w = available.width() if available else 1600
+        screen_h = available.height() if available else 1000
+        self._compact_ui = screen_w < 1500 or screen_h < 850
+        self.setMinimumSize(
+            min(1100, max(900, int(screen_w * 0.60))),
+            min(760, max(600, int(screen_h * 0.68))),
+        )
+        self.resize(
+            min(1600, max(1000, int(screen_w * 0.92))),
+            min(1000, max(680, int(screen_h * 0.90))),
+        )
+
+        self._build_ui()
+        self._add_servers()
+
 
     # ── UI construction ───────────────────────────────────────────────
 
@@ -2282,64 +3217,6 @@ class Dashboard(QMainWindow):
         self._ctimer.start(1000)
         self._tick()
 
-    def _add_servers(self):
-        seen_names = set()
-        for idx, cfg in enumerate(self._cfg.get("servers", [])):
-            if not isinstance(cfg, dict):
-                continue
-            name = str(cfg.get("name") or cfg.get("host") or "").strip()
-            if not name or name in seen_names:
-                continue
-            if not self._demo and (not cfg.get("host") or not cfg.get("user")):
-                continue
-            cfg["name"] = name
-            seen_names.add(name)
-            info = ServerInfo(name)
-            self._servers[name] = info
-
-            card = ServerCard(name)
-            card.clicked.connect(self._on_card_click)
-            card.remove_requested.connect(self._remove_server)
-            self._cards[name] = card
-            self._slist.addWidget(card)
-
-            if self._demo:
-                t = MockMonitorThread(cfg, profile_idx=idx,
-                                      interval=self._interval, parent=self)
-            else:
-                t = MonitorThread(
-                    cfg,
-                    interval=self._interval,
-                    known_hosts_path=self._known_hosts_path,
-                    parent=self,
-                )
-            t.data_ready.connect(self._on_data)
-            t.status_changed.connect(self._on_status)
-            t.conn_lost.connect(self._on_connection_lost)
-            t.host_key_required.connect(self._on_host_key_required)
-            self._threads[name] = t
-
-        # auto-select first
-        if self._cards:
-            first = next(iter(self._cards))
-            self._on_card_click(first)
-
-        # HTTP API (port 8765)
-        self._start_api()
-
-        # start threads after UI is ready
-        QTimer.singleShot(100, self._start_threads)
-
-    def _start_threads(self):
-        for t in self._threads.values():
-            if not t.isRunning():
-                t.start()
-
-    def _on_connection_lost(self, name):
-        card = self._cards.get(name)
-        info = self._servers.get(name)
-        if card is not None and info is not None:
-            card.update_info(info)
 
     # ── detail view (created once per server, reused) ─────────────────
 
@@ -2647,39 +3524,6 @@ class Dashboard(QMainWindow):
         if name in self._servers:
             self._refresh_detail(name, self._servers[name])
 
-    def _on_data(self, name, info: ServerInfo):
-        if self._closing or name not in self._threads:
-            return
-        with self._state_lock:
-            self._servers[name] = info
-        self._record_unmatched_commands(
-            name, info.running_tasks + info.queued_tasks
-        )
-        if name in self._cards:
-            self._cards[name].update_info(info)
-        if name == self._current:
-            self._refresh_detail(name, info)
-        # update overview card data without rebuilding
-        if self._current is None and hasattr(self, "_overview_widget"):
-            self._update_overview_card(name, info)
-
-    def _on_status(self, name, status):
-        with self._state_lock:
-            if name in self._servers:
-                self._servers[name].status = status
-
-    def _on_host_key_required(self, name, prompt):
-        with self._state_lock:
-            self._host_key_prompts[name] = dict(prompt)
-            info = self._servers.get(name)
-            if info is not None:
-                info.status = "host_key_required"
-                info.connected = False
-                info.error = "等待确认服务器主机指纹"
-        card = self._cards.get(name)
-        info = self._servers.get(name)
-        if card is not None and info is not None:
-            card.update_info(info)
 
     def _copy_task_row(self, table: QTableWidget, row: int):
         """Copy all visible fields from one task row to the clipboard."""
@@ -3056,28 +3900,6 @@ class Dashboard(QMainWindow):
 
     # ── SSH config import ─────────────────────────────────────────────
 
-    def _save_config(self):
-        if self._demo or not hasattr(self, "_cfg_path"):
-            return False
-        config_path = Path(self._cfg_path)
-        backup_path = config_path.with_name("config.backup.json")
-        temporary_path = config_path.with_name(f".{config_path.name}.tmp")
-        try:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            if config_path.is_file():
-                shutil.copy2(config_path, backup_path)
-            with open(temporary_path, "w", encoding="utf-8") as f:
-                json.dump(self._cfg, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temporary_path, config_path)
-            return True
-        except OSError:
-            try:
-                temporary_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            return False
 
     def _rename_overview_card(self, name, name_label):
         """Rename a server via dialog, update config and UI."""
@@ -3132,51 +3954,6 @@ class Dashboard(QMainWindow):
         if self._current is None and hasattr(self, "_overview_widget"):
             self._refresh_overview()
 
-    def _remove_server(self, name):
-        """Remove a server from config, UI, and monitoring."""
-        if name not in self._servers:
-            return
-
-        thread = self._threads.pop(name, None)
-        if thread is not None:
-            try:
-                thread.data_ready.disconnect(self._on_data)
-                thread.status_changed.disconnect(self._on_status)
-                thread.conn_lost.disconnect(self._on_connection_lost)
-            except (TypeError, RuntimeError):
-                pass
-            thread.stop()
-            thread.wait(3000)
-
-        # remove from config
-        self._cfg["servers"] = [s for s in self._cfg.get("servers", []) if s.get("name") != name]
-        ui = self._cfg.get("ui", {})
-        if isinstance(ui, dict) and isinstance(ui.get("hidden_servers"), list):
-            ui["hidden_servers"] = [item for item in ui["hidden_servers"] if str(item) != name]
-        self._save_config()
-
-        # remove from sidebar
-        if name in self._cards:
-            self._slist.removeWidget(self._cards[name])
-            self._cards[name].deleteLater()
-            del self._cards[name]
-
-        # remove from data
-        with self._state_lock:
-            self._servers.pop(name, None)
-
-        if hasattr(self, "_detail_views") and name in self._detail_views:
-            view = self._detail_views.pop(name)
-            self._dl.removeWidget(view["widget"])
-            view["widget"].deleteLater()
-
-        # if this was the current detail view, go back to placeholder
-        if self._current == name:
-            self._current = None
-            self._placeholder.show()
-        self._overview_signature = None
-        if self._current is None and hasattr(self, "_overview_widget"):
-            self._refresh_overview()
 
     def _import_ssh_config(self):
         """Read SSH config, merge into config.json, add new servers."""
@@ -3560,688 +4337,6 @@ class Dashboard(QMainWindow):
 
     # === HTTP API ===
 
-    def _start_api(self):
-        if self._api_thread and self._api_thread.is_alive():
-            return
-        self._api_thread = threading.Thread(target=self._run_api, daemon=True)
-        self._api_thread.start()
-
-    def _api_config_dict(self):
-        settings = self._cfg.get("settings", {})
-        if not isinstance(settings, dict):
-            settings = {}
-        ui = self._cfg.get("ui", {})
-        if not isinstance(ui, dict):
-            ui = {}
-        try:
-            font_scale = float(ui.get("font_scale", 1.35))
-        except (TypeError, ValueError):
-            font_scale = 1.35
-        font_scale = max(0.90, min(1.85, font_scale))
-        glass_tint = str(ui.get("glass_tint", "clear") or "clear").lower()
-        if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:
-            glass_tint = "clear"
-        legacy_card_blur = bool(
-            ui.get("readability_blur", False) or ui.get("readability_shade", False)
-        )
-        card_blur_level = self._coerce_blur_level(
-            ui.get("card_blur_level"), 2 if legacy_card_blur else 0
-        )
-        top_bar_blur_level = self._coerce_blur_level(
-            ui.get("top_bar_blur_level"), 2 if bool(ui.get("top_bar_blur", True)) else 0
-        )
-        bottom_bar_blur_level = self._coerce_blur_level(
-            ui.get("bottom_bar_blur_level"), 2 if bool(ui.get("bottom_bar_blur", True)) else 0
-        )
-        try:
-            tray_lightweight_delay_minutes = int(
-                ui.get("tray_lightweight_delay_minutes", 5)
-            )
-        except (TypeError, ValueError):
-            tray_lightweight_delay_minutes = 5
-        tray_lightweight_delay_minutes = max(1, min(1440, tray_lightweight_delay_minutes))
-        try:
-            gpu_history_range_minutes = int(
-                ui.get("gpu_history_range_minutes", 1440)
-            )
-        except (TypeError, ValueError):
-            gpu_history_range_minutes = 1440
-        gpu_history_range_minutes = min(
-            GPU_HISTORY_RANGE_OPTIONS,
-            key=lambda option: abs(option - gpu_history_range_minutes),
-        )
-        hidden_servers_value = ui.get("hidden_servers", [])
-        if not isinstance(hidden_servers_value, list):
-            hidden_servers_value = []
-        hidden_servers = list(dict.fromkeys(
-            str(name).strip() for name in hidden_servers_value if str(name).strip()
-        ))
-        window_bounds = None
-        window_bounds_value = ui.get("window_bounds")
-        if isinstance(window_bounds_value, dict):
-            try:
-                parsed_bounds = {
-                    "x": int(window_bounds_value.get("x", 0)),
-                    "y": int(window_bounds_value.get("y", 0)),
-                    "width": int(window_bounds_value.get("width", 0)),
-                    "height": int(window_bounds_value.get("height", 0)),
-                }
-                if parsed_bounds["width"] >= 320 and parsed_bounds["height"] >= 240:
-                    window_bounds = parsed_bounds
-            except (TypeError, ValueError):
-                window_bounds = None
-        servers = []
-        for server in self._cfg.get("servers", []):
-            if not isinstance(server, dict):
-                continue
-            servers.append({
-                "name": str(server.get("name", "")),
-                "host": str(server.get("host", "")),
-                "port": int(server.get("port", 22) or 22),
-                "user": str(server.get("user", "root")),
-                "key": str(server.get("key", "") or ""),
-                "disk_path": str(server.get("disk_path", ".") or "."),
-                "has_password": bool(server.get("password")),
-            })
-        return {
-            "settings": {
-                "gpu_active_interval": RefreshSettings.gpu_active_interval,
-                "gpu_idle_interval": RefreshSettings.gpu_idle_interval,
-                "disk_interval": RefreshSettings.disk_interval,
-                "process_interval": RefreshSettings.process_interval,
-                "network_interval_hours": RefreshSettings.network_interval_hours,
-                "idle_threshold": RefreshSettings.idle_threshold,
-                "api_port": int(settings.get("api_port", self._api_port)),
-            },
-            "ui": {
-                "wallpaper_path": str(ui.get("wallpaper_path", "") or ""),
-                "default_page": str(ui.get("default_page", "home") or "home"),
-                "autostart": bool(ui.get("autostart", False)),
-                "start_minimized_to_tray": bool(ui.get("start_minimized_to_tray", False)),
-                "card_blur_level": card_blur_level,
-                "text_mode": str(ui.get("text_mode", "system") or "system"),
-                "top_bar_blur_level": top_bar_blur_level,
-                "bottom_bar_blur_level": bottom_bar_blur_level,
-                "glass_tint": glass_tint,
-                "font_scale": font_scale,
-                "hidden_servers": hidden_servers,
-                "remember_window_bounds": bool(ui.get("remember_window_bounds", False)),
-                "tray_lightweight_enabled": bool(ui.get("tray_lightweight_enabled", False)),
-                "tray_lightweight_delay_minutes": tray_lightweight_delay_minutes,
-                "gpu_history_range_minutes": gpu_history_range_minutes,
-                "window_bounds": window_bounds,
-            },
-            "servers": servers,
-        }
-
-    @staticmethod
-    def _coerce_blur_level(value, fallback):
-        try:
-            return max(0, min(3, int(value)))
-        except (TypeError, ValueError):
-            return fallback
-
-    @staticmethod
-    def _history_to_dict(info, range_minutes=1440):
-        series = []
-        for index, history in enumerate(info.gpu_history):
-            points = history_points(history, range_minutes)
-            gpu_name = ""
-            if index < len(info.gpus):
-                gpu_name = str(info.gpus[index].get("name", ""))
-            series.append({
-                "index": info.gpus[index]["idx"] if index < len(info.gpus) else index,
-                "name": gpu_name,
-                "points": points,
-                "daily_points": history_points(history, 1440),
-            })
-        return {"server": info.name, "series": series}
-
-    def _handle_api_mutation(self, request):
-        result = request["result"]
-        done = request["done"]
-        try:
-            action = request.get("action")
-            payload = request.get("payload") or {}
-            if action == "update_settings":
-                result.update(self._api_update_settings(payload))
-            elif action == "refresh_network":
-                result.update(self._api_refresh_network(payload))
-            elif action == "add_server":
-                result.update(self._api_add_server(payload))
-            elif action == "remove_server":
-                result.update(self._api_remove_server(str(payload.get("name", ""))))
-            elif action == "resolve_host_key":
-                result.update(self._api_resolve_host_key(
-                    str(payload.get("name", "")), payload
-                ))
-            else:
-                raise ValueError("Unsupported API action")
-        except Exception as exc:
-            result.update({"ok": False, "error": str(exc)})
-        finally:
-            done.set()
-
-    def _api_update_settings(self, payload):
-        settings_payload = payload.get("settings", payload)
-        if not isinstance(settings_payload, dict):
-            raise ValueError("settings must be an object")
-
-        if "network_interval_hours" in settings_payload:
-            value = settings_payload["network_interval_hours"]
-            if isinstance(value, bool) or not isinstance(value, int) or not 12 <= value <= 168:
-                raise ValueError("网络检测间隔须为12至168之间的整数小时")
-
-        numeric_fields = {
-            "gpu_active_interval": (3, 1, 300),
-            "gpu_idle_interval": (60, 5, 3600),
-            "disk_interval": (21600, 5, 86400),
-            "process_interval": (6, 2, 300),
-            "network_interval_hours": (24, 12, 168),
-            "idle_threshold": (600, 30, 86400),
-        }
-        settings = self._cfg.get("settings", {})
-        if not isinstance(settings, dict):
-            settings = {}
-        for field, bounds in numeric_fields.items():
-            if field not in settings_payload:
-                continue
-            default, minimum, maximum = bounds
-            value = RefreshSettings._bounded_number(
-                settings_payload[field], default, minimum, maximum
-            )
-            settings[field] = value
-            setattr(RefreshSettings, field, value)
-
-        restart_required = False
-        if "api_port" in settings_payload:
-            try:
-                api_port = int(settings_payload["api_port"])
-            except (TypeError, ValueError):
-                raise ValueError("API port must be a number")
-            if not 1024 <= api_port <= 65535:
-                raise ValueError("API port must be between 1024 and 65535")
-            settings["api_port"] = api_port
-            restart_required = api_port != self._api_port
-        self._cfg["settings"] = settings
-
-        ui_payload = payload.get("ui", {})
-        if not isinstance(ui_payload, dict):
-            raise ValueError("ui must be an object")
-        ui = self._cfg.get("ui", {})
-        if not isinstance(ui, dict):
-            ui = {}
-        ui = dict(ui)
-        autostart_change = None
-        if "wallpaper_path" in ui_payload:
-            ui["wallpaper_path"] = str(ui_payload.get("wallpaper_path", "") or "")
-        if "default_page" in ui_payload:
-            page = str(ui_payload.get("default_page", "home")).lower()
-            if page not in {"home", "overview", "gpu", "node", "settings"}:
-                raise ValueError("Unknown default page")
-            ui["default_page"] = page
-        if "autostart" in ui_payload:
-            enabled = bool(ui_payload["autostart"])
-            if enabled != bool(ui.get("autostart", False)):
-                autostart_change = enabled
-            ui["autostart"] = enabled
-        if "start_minimized_to_tray" in ui_payload:
-            ui["start_minimized_to_tray"] = bool(ui_payload["start_minimized_to_tray"])
-        if "readability_blur" in ui_payload or "readability_shade" in ui_payload:
-            legacy_enabled = bool(ui_payload.get("readability_blur", False)) or bool(
-                ui_payload.get("readability_shade", False)
-            )
-            ui["card_blur_level"] = 2 if legacy_enabled else 0
-        if "text_mode" in ui_payload:
-            text_mode = str(ui_payload.get("text_mode", "system")).lower()
-            if text_mode not in {"system", "light", "dark"}:
-                raise ValueError("Unknown text color mode")
-            ui["text_mode"] = text_mode
-        if "top_bar_blur" in ui_payload:
-            ui["top_bar_blur_level"] = 2 if bool(ui_payload["top_bar_blur"]) else 0
-        if "bottom_bar_blur" in ui_payload:
-            ui["bottom_bar_blur_level"] = 2 if bool(ui_payload["bottom_bar_blur"]) else 0
-        for blur_field in ("card_blur_level", "top_bar_blur_level", "bottom_bar_blur_level"):
-            if blur_field not in ui_payload:
-                continue
-            try:
-                blur_level = int(ui_payload[blur_field])
-            except (TypeError, ValueError):
-                raise ValueError("Blur level must be a number")
-            if not 0 <= blur_level <= 3:
-                raise ValueError("Blur level must be between 0 and 3")
-            ui[blur_field] = blur_level
-        if any(field in ui_payload for field in ("readability_blur", "readability_shade", "card_blur_level")):
-            ui.pop("readability_blur", None)
-            ui.pop("readability_shade", None)
-        if "top_bar_blur" in ui_payload or "top_bar_blur_level" in ui_payload:
-            ui.pop("top_bar_blur", None)
-        if "bottom_bar_blur" in ui_payload or "bottom_bar_blur_level" in ui_payload:
-            ui.pop("bottom_bar_blur", None)
-        if "glass_tint" in ui_payload:
-            glass_tint = str(ui_payload.get("glass_tint", "clear")).lower()
-            if glass_tint not in {"clear", "ice", "violet", "aqua", "warm"}:
-                raise ValueError("Unknown glass tint")
-            ui["glass_tint"] = glass_tint
-        if "hidden_servers" in ui_payload:
-            hidden_servers = ui_payload["hidden_servers"]
-            if not isinstance(hidden_servers, list):
-                raise ValueError("Hidden servers must be an array")
-            ui["hidden_servers"] = list(dict.fromkeys(
-                str(name).strip() for name in hidden_servers if str(name).strip()
-            ))
-        if "remember_window_bounds" in ui_payload:
-            ui["remember_window_bounds"] = bool(ui_payload["remember_window_bounds"])
-        if "tray_lightweight_enabled" in ui_payload:
-            ui["tray_lightweight_enabled"] = bool(ui_payload["tray_lightweight_enabled"])
-        if "tray_lightweight_delay_minutes" in ui_payload:
-            try:
-                tray_lightweight_delay_minutes = int(ui_payload["tray_lightweight_delay_minutes"])
-            except (TypeError, ValueError):
-                raise ValueError("Tray lightweight delay must be a number")
-            if not 1 <= tray_lightweight_delay_minutes <= 1440:
-                raise ValueError("Tray lightweight delay must be between 1 and 1440 minutes")
-            ui["tray_lightweight_delay_minutes"] = tray_lightweight_delay_minutes
-        ui.pop("update_check_interval_hours", None)
-        if "gpu_history_range_minutes" in ui_payload:
-            try:
-                gpu_history_range_minutes = int(ui_payload["gpu_history_range_minutes"])
-            except (TypeError, ValueError):
-                raise ValueError("GPU history range must be a number")
-            if gpu_history_range_minutes not in GPU_HISTORY_RANGE_OPTIONS:
-                raise ValueError("GPU history range must be 15, 60, 360, or 1440 minutes")
-            ui["gpu_history_range_minutes"] = gpu_history_range_minutes
-        if "window_bounds" in ui_payload:
-            window_bounds = ui_payload["window_bounds"]
-            if window_bounds is None:
-                ui.pop("window_bounds", None)
-            elif not isinstance(window_bounds, dict):
-                raise ValueError("Window bounds must be an object")
-            else:
-                try:
-                    parsed_bounds = {
-                        "x": int(window_bounds.get("x", 0)),
-                        "y": int(window_bounds.get("y", 0)),
-                        "width": int(window_bounds.get("width", 0)),
-                        "height": int(window_bounds.get("height", 0)),
-                    }
-                except (TypeError, ValueError):
-                    raise ValueError("Window bounds must contain integer values")
-                if not 320 <= parsed_bounds["width"] <= 16384:
-                    raise ValueError("Window width is out of range")
-                if not 240 <= parsed_bounds["height"] <= 16384:
-                    raise ValueError("Window height is out of range")
-                if not -65536 <= parsed_bounds["x"] <= 65536 or not -65536 <= parsed_bounds["y"] <= 65536:
-                    raise ValueError("Window position is out of range")
-                ui["window_bounds"] = parsed_bounds
-        if "font_scale" in ui_payload:
-            try:
-                font_scale = float(ui_payload["font_scale"])
-            except (TypeError, ValueError):
-                raise ValueError("Font scale must be a number")
-            if not 0.90 <= font_scale <= 1.85:
-                raise ValueError("Font scale must be between 0.90 and 1.85")
-            ui["font_scale"] = round(font_scale, 2)
-        # Validate the entire UI payload first. Saving an unrelated setting or
-        # rejecting an invalid request must not modify Windows startup entries.
-        if autostart_change is not None:
-            self._set_autostart(autostart_change)
-        self._cfg["ui"] = ui
-        if not self._save_config():
-            raise OSError("Unable to save configuration")
-        return {
-            "ok": True,
-            "restart_required": restart_required,
-            "config": self._api_config_dict(),
-        }
-
-    def _set_autostart(self, enabled):
-        changed = update_autostart(
-            enabled,
-            self._cfg_path,
-            str(os.environ.get("GPU_MONITOR_FRONTEND_EXE", "") or "").strip(),
-        )
-        backend_logger.info("User changed autostart enabled=%s registry_changed=%s", enabled, changed)
-
-    def _api_add_server(self, payload):
-        name = str(payload.get("name", "")).strip()
-        host = str(payload.get("host", "")).strip()
-        user = str(payload.get("user", "root")).strip() or "root"
-        try:
-            port = int(payload.get("port", 22))
-        except (TypeError, ValueError):
-            raise ValueError("SSH port must be a number")
-        if not name:
-            raise ValueError("Server name is required")
-        if not host:
-            raise ValueError("Server address is required")
-        if not 1 <= port <= 65535:
-            raise ValueError("SSH port must be between 1 and 65535")
-        if name in self._servers:
-            raise ValueError("A server with this name already exists")
-
-        configured = [
-            server for server in self._cfg.get("servers", [])
-            if isinstance(server, dict)
-        ]
-        endpoint = (host.lower(), port, user.lower())
-        for server in configured:
-            current = (
-                str(server.get("host", "")).strip().lower(),
-                int(server.get("port", 22) or 22),
-                str(server.get("user", "root")).strip().lower(),
-            )
-            if current == endpoint:
-                raise ValueError("This SSH endpoint already exists")
-
-        server_cfg = {
-            "name": name,
-            "host": host,
-            "port": port,
-            "user": user,
-            "disk_path": str(payload.get("disk_path", ".") or ".").strip() or ".",
-        }
-        password = str(payload.get("password", "") or "")
-        key_file = str(payload.get("key", "") or "").strip()
-        if password:
-            server_cfg["password"] = password
-        if key_file:
-            server_cfg["key"] = key_file
-
-        configured.append(server_cfg)
-        self._cfg["servers"] = configured
-        self._save_config()
-
-        info = ServerInfo(name)
-        with self._state_lock:
-            self._servers[name] = info
-        if hasattr(self, "_slist"):
-            card = ServerCard(name)
-            card.clicked.connect(self._on_card_click)
-            card.remove_requested.connect(self._remove_server)
-            self._cards[name] = card
-            self._slist.addWidget(card)
-
-        if self._demo:
-            thread = MockMonitorThread(
-                server_cfg, profile_idx=len(self._threads) % 4,
-                interval=self._interval, parent=self
-            )
-        else:
-            thread = MonitorThread(
-                server_cfg,
-                interval=self._interval,
-                known_hosts_path=self._known_hosts_path,
-                parent=self,
-            )
-        thread.data_ready.connect(self._on_data)
-        thread.status_changed.connect(self._on_status)
-        thread.conn_lost.connect(self._on_connection_lost)
-        thread.host_key_required.connect(self._on_host_key_required)
-        self._threads[name] = thread
-        thread.start()
-        self._overview_signature = None
-        return {
-            "ok": True,
-            "server": {
-                "name": name, "host": host, "port": port, "user": user,
-                "disk_path": server_cfg["disk_path"],
-            },
-        }
-
-    def _api_refresh_network(self, payload):
-        name = str(payload.get("name", ""))
-        if name and name not in self._threads:
-            raise ValueError("未找到服务器")
-        targets = [self._threads[name]] if name else list(self._threads.values())
-        scheduled = 0
-        requested_at = time.time()
-        for thread in targets:
-            collector = getattr(thread, "collector", None)
-            info = getattr(thread, "info", None)
-            if collector is not None and info is not None and info.connected:
-                collector.request_network_refresh(requested_at)
-                scheduled += 1
-        return {"ok": True, "scheduled": scheduled}
-
-    def _api_remove_server(self, name):
-        if not name or name not in self._servers:
-            raise ValueError("Server was not found")
-        self._remove_server(name)
-        return {"ok": True}
-
-    def _api_host_key_prompts(self):
-        with self._state_lock:
-            prompts = [dict(prompt) for prompt in self._host_key_prompts.values()]
-        return {"ok": True, "prompts": prompts}
-
-    def _api_resolve_host_key(self, name, payload):
-        if not name or name not in self._threads:
-            raise ValueError("Server was not found")
-        decision = str(payload.get("decision", "")).strip().lower()
-        if decision not in {"once", "remember", "reject"}:
-            raise ValueError("Unknown host key decision")
-        thread = self._threads[name]
-        if not isinstance(thread, MonitorThread) or not thread.resolve_host_key(decision):
-            raise ValueError("No pending host key confirmation for this server")
-        with self._state_lock:
-            self._host_key_prompts.pop(name, None)
-        return {"ok": True, "server_name": name, "decision": decision}
-
-    def _run_api(self):
-        sv = self
-
-        class APIHandler(http.server.BaseHTTPRequestHandler):
-            def log_message(self, fmt, *args):
-                pass
-
-            def parse_request(self):
-                if not super().parse_request():
-                    return False
-                # Native clients only: reject browser origins and DNS rebinding.
-                allowed_hosts = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
-                if (self.headers.get("Host", "").lower() not in allowed_hosts
-                        or self.headers.get("Origin") is not None
-                        or self.headers.get("Sec-Fetch-Site") in {"cross-site", "same-site"}):
-                    self._send_error(403, "Only native loopback clients are allowed")
-                    return False
-                return True
-
-            def do_GET(self):
-                path = urlsplit(self.path).path
-                if path == "/api/servers":
-                    with sv._state_lock:
-                        items = list(sv._servers.items())
-                    data = {
-                        name: sv._server_to_dict(info) for name, info in items
-                    }
-                    self._send_json(data)
-                elif path == "/api/config":
-                    self._send_json(sv._api_config_dict())
-                elif path == "/api/host-key-prompts":
-                    self._send_json(sv._api_host_key_prompts())
-                elif path.startswith("/api/servers/") and path.endswith("/history"):
-                    try:
-                        range_minutes = int(parse_qs(urlsplit(self.path).query).get("range_minutes", ["1440"])[0])
-                        if range_minutes not in RANGE_BUCKET_SECONDS:
-                            raise ValueError()
-                    except (ValueError, TypeError):
-                        self._send_error(400, "Invalid history range")
-                        return
-                    encoded_name = path[len("/api/servers/"):-len("/history")]
-                    name = unquote(encoded_name.rstrip("/"))
-                    with sv._state_lock:
-                        info = sv._servers.get(name)
-                    if info is not None:
-                        self._send_json(sv._history_to_dict(info, range_minutes))
-                    else:
-                        self._send_error(404, "Server not found")
-                elif path.startswith("/api/servers/"):
-                    name = unquote(path[len("/api/servers/"):])
-                    with sv._state_lock:
-                        info = sv._servers.get(name)
-                    if info is not None:
-                        self._send_json(sv._server_to_dict(info))
-                    else:
-                        self._send_error(404, "Server not found")
-                elif path == "/api/events":
-                    events = []
-                    with sv._state_lock:
-                        items = list(sv._servers.items())
-                    for name, info in items:
-                        for ev in info.gpu_events:
-                            ev_copy = dict(ev)
-                            ev_copy["server"] = name
-                            events.append(ev_copy)
-                    self._send_json(events)
-                else:
-                    self._send_error(404, "Not found")
-
-            def do_POST(self):
-                path = urlsplit(self.path).path
-                try:
-                    payload = self._read_json()
-                except ValueError as exc:
-                    self._send_error(400, str(exc))
-                    return
-                if path == "/api/settings":
-                    self._dispatch_mutation("update_settings", payload)
-                elif path == "/api/network/refresh":
-                    self._dispatch_mutation("refresh_network", payload)
-                elif path == "/api/servers":
-                    self._dispatch_mutation("add_server", payload)
-                elif path.startswith("/api/host-key-prompts/"):
-                    name = unquote(path[len("/api/host-key-prompts/"):])
-                    mutation = dict(payload)
-                    mutation["name"] = name
-                    self._dispatch_mutation("resolve_host_key", mutation)
-                else:
-                    self._send_error(404, "Not found")
-
-            def do_DELETE(self):
-                path = urlsplit(self.path).path
-                if path.startswith("/api/servers/"):
-                    name = unquote(path[len("/api/servers/"):])
-                    self._dispatch_mutation("remove_server", {"name": name})
-                else:
-                    self._send_error(404, "Not found")
-
-            def do_OPTIONS(self):
-                self._send_error(405, "Browser access is not supported")
-
-            def _read_json(self):
-                if self.headers.get_content_type() != "application/json":
-                    raise ValueError("Content-Type must be application/json")
-                try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                except ValueError:
-                    raise ValueError("Invalid Content-Length")
-                if length <= 0 or length > 1024 * 1024:
-                    raise ValueError("Request body must contain JSON")
-                try:
-                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    raise ValueError("Invalid JSON")
-                if not isinstance(payload, dict):
-                    raise ValueError("JSON body must be an object")
-                return payload
-
-            def _dispatch_mutation(self, action, payload):
-                done = threading.Event()
-                result = {}
-                sv.api_mutation_requested.emit({
-                    "action": action,
-                    "payload": payload,
-                    "done": done,
-                    "result": result,
-                })
-                if not done.wait(10):
-                    self._send_error(504, "Backend operation timed out")
-                    return
-                self._send_json(result, 200 if result.get("ok") else 400)
-
-            def _send_json(self, data, status=200):
-                body = json.dumps(data, default=str, ensure_ascii=False).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def _send_error(self, code, msg):
-                self._send_json({"ok": False, "error": msg}, code)
-
-        try:
-            server = http.server.ThreadingHTTPServer(
-                ("127.0.0.1", self._api_port), APIHandler
-            )
-            server.daemon_threads = True
-            self._api_server = server
-            backend_logger.info("Local API listening on 127.0.0.1:%s", self._api_port)
-            server.serve_forever(poll_interval=0.25)
-        except OSError:
-            self._api_server = None
-            backend_logger.exception("Local API failed to listen on 127.0.0.1:%s", self._api_port)
-
-    def _server_to_dict(self, info):
-        def task_to_dict(task):
-            command = str(task.get("cmd", "") or "")
-            return {
-                "pid": str(task.get("pid", "")),
-                "user": str(task.get("user", "")),
-                "cpu_percent": task.get("cpu", 0),
-                "mem_percent": task.get("mem", 0),
-                "gpu": str(task.get("gpu", "—") or "—"),
-                "state": str(task.get("state", "") or ""),
-                "command": command,
-                "time": str(task.get("etime", "") or ""),
-                "note": str(self._match_note(command) or ""),
-            }
-
-        return {
-            "name": info.name,
-            "status": info.status,
-            "connected": info.connected,
-            "error": info.error,
-            "cpu": {
-                "percent": info.cpu_pct,
-                "cores": info.cpu_cores,
-                "model": info.cpu_model,
-            },
-            "memory": {
-                "used_gb": round(info.mem_used / 1024, 1),
-                "total_gb": round(info.mem_total / 1024, 1),
-                "percent": info.mem_pct,
-            },
-            "disk": {
-                "used_gb": info.disk_used,
-                "total_gb": info.disk_total,
-                "percent": info.disk_pct,
-                "volumes": info.disks,
-            },
-            "disk_error": info.disk_error,
-            "network": info.network,
-            "network_checked_at": info.network_checked_at,
-            "network_next_check_at": (info.network_checked_at + RefreshSettings.network_interval_hours * 3600) if info.network_checked_at else 0,
-            "network_error": info.network_error,
-            "gpus": [
-                {
-                    "index": g["idx"],
-                    "name": g["name"],
-                    "util_percent": g["util"],
-                    "memory_used_mib": g["mem_used"],
-                    "memory_total_mib": g["mem_total"],
-                    "memory_percent": g["mem_pct"],
-                    "temp_celsius": g["temp"],
-                    "power_watts": g["power"],
-                    "power_limit_watts": g["power_lim"],
-                }
-                for g in info.gpus
-            ],
-            "running_tasks": [task_to_dict(task) for task in info.running_tasks],
-            "queued_tasks": [task_to_dict(task) for task in info.queued_tasks],
-            "last_update": info.last_update.isoformat(sep=" ", timespec="seconds") if info.last_update else None,
-        }
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -4250,36 +4345,8 @@ class Dashboard(QMainWindow):
             self._refresh_overview()
 
     def closeEvent(self, event):
-        self._closing = True
-        self._ctimer.stop()
-        server = self._api_server
-        if server:
-            self._api_server = None
-            threading.Thread(
-                target=self._shutdown_http_server,
-                args=(server,),
-                daemon=True,
-            ).start()
-        threads = list(self._threads.values())
-        for t in threads:
-            t.stop()
-
-        # Keep one shared shutdown deadline.  Waiting five seconds per server
-        # made copied configs with many stale entries freeze the GUI on exit.
-        deadline = time.monotonic() + 1.5
-        for t in threads:
-            remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
-            if remaining_ms <= 0:
-                break
-            t.wait(remaining_ms)
+        self._stop_backend()
         event.accept()
-
-    @staticmethod
-    def _shutdown_http_server(server):
-        try:
-            server.shutdown()
-        finally:
-            server.server_close()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -4481,45 +4548,36 @@ def main():
     ap.add_argument("--api-port", type=int, default=8766,
                     help="Local API port for the Kyant frontend (default: 8766)")
     ap.add_argument("--backend-only", action="store_true",
-                    help="Run the copied monitor as a hidden data backend")
+                    help="Run data collection and local API without a dashboard UI")
     args = ap.parse_args()
     backend_logger.info("Backend initialization backend_only=%s api_port=%s", args.backend_only, args.api_port)
 
-    # ── HiDPI scaling (must be set BEFORE QApplication) ───────────────
-    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-    try:
-        QApplication.setHighDpiScaleFactorRoundingPolicy(
-            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
-        )
-    except AttributeError:
-        pass  # older PyQt5 versions
-
-    backend_logger.info("Creating Qt application")
-    app = QApplication(sys.argv)
-    backend_logger.info("Qt application initialized")
-    app.setStyle("Fusion")
     if args.backend_only:
-        # Keep the hidden API backend alive even though no dashboard window is shown.
-        app.setQuitOnLastWindowClosed(False)
-
-    # bump base font for HiDPI readability
-    base_font = QFont("Segoe UI", 10)
-    app.setFont(base_font)
-
-    app.setStyleSheet(_GLOBAL_CSS)
-
-    backend_logger.info("Initializing dashboard and local API")
-    win = Dashboard(args.config, demo=args.demo, api_port=args.api_port)
-    backend_logger.info("Dashboard initialized; entering Qt event loop")
-    if not args.backend_only:
+        backend_logger.info("Creating data-only Qt core service; legacy UI disabled")
+        app = QCoreApplication(sys.argv)
+        win = MonitorBackend(args.config, demo=args.demo, api_port=args.api_port)
+        app.aboutToQuit.connect(win._stop_backend)
+    else:
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+        try:
+            QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+        except AttributeError:
+            pass
+        app = QApplication(sys.argv)
+        app.setStyle("Fusion")
+        app.setFont(QFont("Segoe UI", 10))
+        app.setStyleSheet(_GLOBAL_CSS)
+        win = Dashboard(args.config, demo=args.demo, api_port=args.api_port)
         win.show()
+    backend_logger.info("Monitor initialized; entering Qt event loop")
 
     try:
         sys.exit(app.exec_())
     except KeyboardInterrupt:
         pass
     finally:
+        win._stop_backend()
         backend_logger.info("Backend event loop exited")
 
 

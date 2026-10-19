@@ -126,6 +126,9 @@ try {
     if (-not $backendLog -or -not $backendLog.Contains('Local API listening')) {
         throw 'Backend became ready but its own diagnostic log was not recorded'
     }
+    if (-not $backendLog.Contains('Creating data-only Qt core service; legacy UI disabled')) {
+        throw 'The packaged backend did not start in data-only mode'
+    }
     $expectedRuntime = Join-Path (Split-Path -Parent $backend) '_internal'
     if ($backendLog -notmatch ('Backend runtime directory=' + [regex]::Escape($expectedRuntime) + '(\r?\n|$)')) {
         throw "Backend did not load its runtime directly from the installed directory: $expectedRuntime"
