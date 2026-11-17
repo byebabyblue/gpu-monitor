@@ -29,14 +29,19 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.Icon
+import androidx.compose.material.Checkbox
+import androidx.compose.material.CheckboxDefaults
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Switch
 import androidx.compose.material.SwitchDefaults
+import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.material.TextFieldDefaults
 import androidx.compose.material.icons.Icons
@@ -46,6 +51,7 @@ import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Refresh
@@ -74,6 +80,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -81,6 +88,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -162,6 +170,7 @@ internal fun isStartupAppearanceReady(
 @Composable
 internal fun GpuMonitorDashboardV2(
     updateController: AppUpdateController,
+    codexIdleWatch: CodexIdleWatch? = null,
     showCloseDialog: Boolean,
     onDismissCloseDialog: () -> Unit,
     onTrayLightweightPolicyChanged: (Boolean, Int) -> Unit,
@@ -473,6 +482,8 @@ internal fun GpuMonitorDashboardV2(
                         updateLastAttempt = updateLastAttempt,
                         apiPort = apiPort,
                         onNetworkIntervalSaved = { hours -> config = config.copy(polling = config.polling.copy(networkIntervalHours = hours)) },
+                        codexIdleWatch = codexIdleWatch,
+                        idleCards = servers.flatMap { server -> server.gpus.map { IdleCard(server.name, it.index) } },
                         onCheckUpdate = { updateController.check(true) },
                         onWallpaperPreview = { path ->
                             config = config.copy(ui = config.ui.copy(wallpaperPath = path))
@@ -1729,6 +1740,8 @@ internal fun V2SettingsPage(
     modifier: Modifier,
     apiPort: Int = config.polling.apiPort,
     onNetworkIntervalSaved: (Int) -> Unit = {},
+    codexIdleWatch: CodexIdleWatch? = null,
+    idleCards: List<IdleCard> = emptyList(),
 ) {
     val wallpaperScope = rememberCoroutineScope()
     var wallpaper by remember { mutableStateOf(config.ui.wallpaperPath) }
@@ -2131,6 +2144,7 @@ internal fun V2SettingsPage(
         }
 
         }
+        if (codexIdleWatch != null) V2CodexIdleSettings(backdrop, codexIdleWatch, idleCards, apiPort)
         V2SettingsSection(
             backdrop,
             "服务器管理",
@@ -2339,6 +2353,7 @@ private fun V2SettingsSection(
     title: String,
     icon: ImageVector,
     modifier: Modifier,
+    headerAction: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     V2GlassSurface(backdrop, modifier, RoundedCornerShape(24.dp), tintAlpha = 0.20f) {
@@ -2346,8 +2361,10 @@ private fun V2SettingsSection(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, null, tint = V2AccentStrong, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(9.dp))
-                Column {
-                    Text(title, color = V2Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(title, color = V2Text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                if (headerAction != null) {
+                    Spacer(Modifier.width(10.dp))
+                    headerAction()
                 }
             }
             content()
@@ -2392,6 +2409,119 @@ private fun V2ActionButton(label: String, icon: ImageVector, busy: Boolean, onCl
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun V2CodexIdleSettings(backdrop: Backdrop, watcher: CodexIdleWatch, detected: List<IdleCard>, port: Int) {
+    val saved = watcher.rule
+    var showHelp by remember { mutableStateOf(false) }
+    var cards by remember(saved) { mutableStateOf(saved.cards) }
+    var util by remember(saved) { mutableStateOf(saved.utilization.toString().removeSuffix(".0")) }
+    var memory by remember(saved) { mutableStateOf(saved.memoryMib.toString()) }
+    var seconds by remember(saved) { mutableStateOf(saved.seconds.toString()) }
+    var thread by remember(saved) { mutableStateOf(saved.thread) }
+    var executable by remember(saved) { mutableStateOf(saved.executable) }
+    var message by remember(saved) { mutableStateOf(saved.message) }
+    var repeatAlerts by remember(saved) { mutableStateOf(saved.repeatAlerts) }
+    val active = watcher.running
+    val available = (detected + saved.cards + cards).distinct()
+    if (showHelp) V2CodexIdleHelp { showHelp = false }
+    V2SettingsSection(backdrop, "Codex", "显卡空闲提醒 · Codex", Icons.Rounded.Memory, Modifier.fillMaxWidth(),
+        headerAction = { V2ActionButton("使用方法", Icons.Rounded.HelpOutline, false) { showHelp = true } },
+    ) {
+        Text("选择要监控的显卡", color = V2Text, fontSize = 16.sp)
+        if (available.isEmpty()) Text("服务器连通后，显卡会显示在这里。", color = V2Dim, fontSize = 14.sp)
+        for ((node, nodeCards) in available.groupBy { it.node }) {
+            Text(node, color = V2Text, fontSize = 16.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                for (card in nodeCards.sortedBy { it.index }) {
+                    val toggle = { checked: Boolean -> cards = if (checked) (cards + card).distinct() else cards - card }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(card in cards, toggle, enabled = !active, colors = CheckboxDefaults.colors(checkedColor = V2Accent))
+                        Text("${card.index} 号卡", color = V2Text, fontSize = 15.sp,
+                            modifier = Modifier.clickable(enabled = !active) { toggle(card !in cards) })
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            V2Field(util, { util = it }, "利用率上限（%）", Modifier.weight(1f), enabled = !active)
+            V2Field(memory, { memory = it }, "已用显存低于（MiB）", Modifier.weight(1f), enabled = !active)
+            V2Field(seconds, { seconds = it }, "空闲持续（秒）", Modifier.weight(1f), enabled = !active)
+        }
+        V2Field(thread, { thread = it }, "Codex 对话 ID（留空则在此试跑）", Modifier.fillMaxWidth(), enabled = !active)
+        if (thread.isNotBlank()) {
+            V2Field(executable, { executable = it }, "本机 codex.exe 路径（可自动查找）", Modifier.fillMaxWidth(), enabled = !active)
+            OutlinedTextField(message, { message = it.take(4000) }, enabled = !active,
+                label = { Text("发送给 Codex 的消息") }, modifier = Modifier.fillMaxWidth(),
+                textStyle = XerverTextStyle.copy(color = V2Text), minLines = 3, maxLines = 6,
+                colors = TextFieldDefaults.outlinedTextFieldColors(textColor = V2Text, focusedLabelColor = V2Accent,
+                    unfocusedLabelColor = V2Dim, cursorColor = V2Accent))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(repeatAlerts, { repeatAlerts = it }, enabled = !active,
+                colors = CheckboxDefaults.colors(checkedColor = V2Accent))
+            Text("持续监控：显卡再次从忙变为空闲时继续提醒", color = V2Text, fontSize = 15.sp)
+        }
+        Text("任意一张已勾选的卡达标即提醒。未勾选持续监控时，首次提醒后停止。", color = V2Dim, fontSize = 14.sp)
+        Text("节点无排队任务才计时。启动时保存设置，退出 Xerver 后停止监控。", color = V2Dim, fontSize = 14.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            V2ActionButton(if (active) "停止监控" else if (thread.isBlank()) "本地试跑" else "启动并发送提醒",
+                Icons.Rounded.Refresh, false) {
+                if (active) watcher.stop() else watcher.start(port, IdleRule(cards, util.toDoubleOrNull() ?: -1.0,
+                    memory.toIntOrNull() ?: 0, seconds.toIntOrNull() ?: 0, thread, executable, message, repeatAlerts))
+            }
+            Text(watcher.status, color = V2Text, fontSize = 15.sp, modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun V2CodexIdleHelp(onClose: () -> Unit) {
+    val uri = LocalUriHandler.current
+    val panel = if (LocalV2DarkText.current) Color(0xFFF8FAFF) else Color(0xFF172033)
+    Dialog(onDismissRequest = onClose) {
+        Surface(
+            modifier = Modifier.widthIn(max = 670.dp).fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp), color = panel, elevation = 12.dp,
+        ) {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("Codex 空闲提醒 · 使用方法", color = V2Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                SelectionContainer(Modifier.weight(1f, fill = false)) {
+                    Column(
+                        Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        V2CodexHelpStep("1. 获取对话 ID",
+                            "在本机桌面 Codex 打开目标对话，问「帮我查这条对话的 ID，我要填到 Xerver」。把返回的 UUID 复制到 Xerver 的「Codex 对话 ID」。")
+                        V2CodexHelpStep("2. 安装完整版 Codex CLI",
+                            "打开下方官方说明，按 Windows 的安装步骤操作，不要只从桌面端目录复制一个 codex.exe。安装后重新打开 PowerShell，运行 codex --version 检查，再运行 codex 登录同一个账号。")
+                        Text("(Get-Command codex.exe).Source", color = V2Accent, fontSize = 15.sp)
+                        Text("如果 Xerver 未自动找到完整版，把上面命令返回的 codex.exe 完整路径填入 Xerver。", color = V2Dim, fontSize = 15.sp)
+                        V2CodexHelpStep("3. 完全退出桌面 Codex，再启动监控",
+                            "先退出桌面 Codex（仅关窗口可能不够），并退出打开了同一对话的交互式 CLI。回到 Xerver，勾选显卡、设定阈值和持续时间，填提醒消息，再点「启动并发送提醒」。Xerver 会在达标时自动调用 CLI。")
+                        V2CodexHelpStep("4. 先停止监控，再打开桌面 Codex",
+                            "如果正在发送，先等 Xerver 显示发送结果；持续监控模式下再点「停止监控」，确认已停止后才重新打开桌面 Codex。否则两个进程可能争用同一对话，导致消息到达却没有回复。")
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
+                    V2ActionButton("官方安装说明", Icons.Rounded.FolderOpen, false) {
+                        runCatching { uri.openUri("https://github.com/openai/codex#installing-and-running-codex-cli") }
+                    }
+                    V2ActionButton("关闭", Icons.Rounded.CheckCircle, false, onClose)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun V2CodexHelpStep(title: String, description: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, color = V2Text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Text(description, color = V2Dim, fontSize = 15.sp)
+    }
+}
+
 @Composable
 private fun V2Field(
     value: String,
@@ -2399,9 +2529,11 @@ private fun V2Field(
     label: String,
     modifier: Modifier,
     secret: Boolean = false,
+    enabled: Boolean = true,
 ) {
     OutlinedTextField(
         value = value,
+        enabled = enabled,
         onValueChange = onValueChange,
         label = { Text(label, fontSize = 14.sp) },
         modifier = modifier,

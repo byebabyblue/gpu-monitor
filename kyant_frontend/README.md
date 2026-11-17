@@ -1,5 +1,20 @@
 # Xerver
 
+## 显卡空闲提醒
+
+设置 → 显卡空闲提醒：勾选显卡，填写利用率上限、已用显存上限和持续时间。默认 0%、低于 1024 MiB、60 秒，且节点无排队任务。每 15 秒读取本地采集数据；任意一张已勾选的显卡达标即可触发。默认首次提醒后停止；勾选持续监控后，显卡只有从忙重新变为空闲，才会再次提醒。
+
+留空 Codex 对话 ID 可本地试跑。填写可由本机 Codex CLI 恢复的会话 UUID 和自定义消息后，达标时 Xerver 通过 `codex exec resume` 发送消息及显卡指标。Codex CLI 须已登录，若未找到可填 `codex.exe` 的完整路径。请求以只读沙箱执行；需要实际运行实验时在对话内另行安排。发送失败会显示原因并停止监控，不会自动重试。
+
+点设置卡片右上角的「使用方法」可查看完整操作：
+
+1. 在本机 Codex 目标对话中问「帮我查这条对话的 ID」，把返回的 UUID 填入 Xerver。
+2. 按 [Codex CLI 官方安装说明](https://github.com/openai/codex#installing-and-running-codex-cli) 安装完整 Windows CLI。新开 PowerShell，运行 `codex --version` 检查，并用 `codex` 登录同一个账号。如果 Xerver 未自动找到 CLI，可用 `(Get-Command codex.exe).Source` 查路径。
+3. 完全退出桌面 Codex，并退出同一对话的交互式 CLI，再开启 Xerver 监控。
+4. 要打开桌面 Codex，先等正在发送的回合结束，停止 Xerver 监控，再打开桌面端。
+
+设置在启动监控时保存在本机；托盘状态可继续监控，完全退出后停止，重新启动应用后需手动开启。
+
 ## 1.2.4
 
 - 数据后端使用无窗口服务，不再创建旧版卡片、详情页、图表和界面定时器。

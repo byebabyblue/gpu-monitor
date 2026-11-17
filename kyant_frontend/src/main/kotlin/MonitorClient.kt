@@ -195,6 +195,10 @@ internal object MonitorClient {
         ?: MonitorInstallation.configuredApiPort()
         ?: DefaultApiPort
 
+    fun fetchIdleSamples(port: Int): Result<List<IdleSample>> = runCatching {
+        readIdleSamples(request(port, "GET", "/api/servers").asJsonObject, java.time.Instant.now().epochSecond)
+    }
+
     fun fetchServers(port: Int): Result<List<MonitorServer>> = runCatching {
         val root = request(port, "GET", "/api/servers").asJsonObject
         root.entrySet()

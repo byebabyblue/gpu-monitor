@@ -433,6 +433,9 @@ private fun runMonitorApplication() {
         }
         val backendScope = rememberCoroutineScope()
         val updateController = remember { AppUpdateController(backendScope, MonitorInstallation.configFile()) }
+        val codexIdleWatch = remember {
+            CodexIdleWatch(backendScope, MonitorInstallation.configFile().resolveSibling("codex-idle-watch.json"))
+        }
         val startMinimizedToTray = remember { MonitorInstallation.startMinimizedToTray() }
         var windowVisible by remember {
             mutableStateOf(!(startMinimizedToTray && traySupported))
@@ -461,6 +464,7 @@ private fun runMonitorApplication() {
             }
         }
         val exitGpuMonitor = {
+            codexIdleWatch.stop()
             bundledBackend.stop()
             MonitorInstallation.persistWindowBoundsIfEnabled(lastFloatingBounds)
             exitApplication()
@@ -544,6 +548,7 @@ private fun runMonitorApplication() {
             }
                 GpuMonitorDashboardV2(
                     updateController = updateController,
+                    codexIdleWatch = codexIdleWatch,
                     showCloseDialog = showCloseDialog,
                     onDismissCloseDialog = { showCloseDialog = false },
                     onTrayLightweightPolicyChanged = { enabled, delayMinutes ->
